@@ -2234,4 +2234,4 @@ failure handling
 
 The goal is not to force real-world source data into artificial assumptions.
 
-The goal is to provide downstream consumers with explicit, observable, testable guarantees while preserving the original source evidence whenever those guarantees cannot be satisfied.
+The goal is to provide downstream consumers with explicit, observable, testable guarantees while preserving the original source evidence whenever those guarantee cannot be satisfied.
