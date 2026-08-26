@@ -665,7 +665,7 @@ Fabric-managed workspace definitions will later be stored separately from manual
 * [x] Source catalog
 * [x] Initial data contracts
 * [x] Architecture Decision Records
-* [ ] GitHub/Fabric integration
+* [x] GitHub/Fabric integration
 
 ### Phase 2 — Bronze & Silver Engineering
 
@@ -709,20 +709,30 @@ Fabric-managed workspace definitions will later be stored separately from manual
 
 ## Current Project Status
 
-**Current phase:** Architecture & Source Discovery
+**Phase 1 — Architecture & Source Discovery: COMPLETE**
 
-Five core IESO sources have completed initial technical discovery and candidate-grain validation.
+Five core IESO sources have completed technical discovery and candidate-grain validation.
 
-The next engineering milestones are:
+The project now has:
+
+- documented business requirements;
+- Architecture V1;
+- source catalog;
+- initial Data Contracts;
+- Architecture Decision Records;
+- naming conventions;
+- immutable Bronze source samples;
+- source-integrity validation;
+- GitHub version control;
+- Microsoft Fabric Git integration.
+
+The next engineering phase is:
 
 ```text
-Fabric/GitHub integration
-→ Bronze/Silver engineering
+Bronze ingestion framework
+→ source registry
+→ Silver transformations
 → data quality implementation
-→ Gold modeling
-```
-
-No production-readiness, scalability or AI-accuracy claims are made before they are implemented and measured.
 
 ---
 
