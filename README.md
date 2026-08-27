@@ -823,4 +823,4 @@ Latest Day 2 validation:
 - DQ results: 38
 - DQ ERROR: 0
 - DQ FAIL: 0
-- Cross-source Ontario Demand reconciliation: 5,712 records checked, 1 WARN mismatch
+- Cross-source Ontario Demand reconciliation: 5,712 records checked, 1 WARN mismatch.

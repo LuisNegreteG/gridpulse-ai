@@ -2266,4 +2266,4 @@ The known SRC-001 / SRC-002 Ontario Demand discrepancy remains preserved as a WA
 - SRC-002: 13,962 MW
 - Difference: 1,270 MW
 
-Root cause remains unconfirmed.
+Root cause remains unconfirmed

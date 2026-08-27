@@ -898,7 +898,7 @@ A filename therefore identifies an upstream source object but does not uniquely 
 
 Silver tables maintain one current row per native business key using Delta MERGE.
 
-Incoming matching business keys are updated, new keys are inserted, and rows absent from a newer source payload are not automatically deleted.
+Incoming matching business keys are updated, new keys are inserted and rows absent from a newer source payload are not automatically deleted.
 
 Historical source revisions remain preserved in Bronze.
 
