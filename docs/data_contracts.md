@@ -2235,3 +2235,35 @@ failure handling
 The goal is not to force real-world source data into artificial assumptions.
 
 The goal is to provide downstream consumers with explicit, observable, testable guarantees while preserving the original source evidence whenever those guarantee cannot be satisfied.
+
+
+## Phase 2 Implementation Note
+
+The five planned Silver datasets are now implemented as Delta tables with their previously defined native grains.
+
+Technical lineage implemented across Silver includes:
+
+- `_source_name`
+- `_source_file`
+- `_source_url`
+- `_source_hash`
+- `_source_version`
+- `_source_created_at`
+- `_ingestion_timestamp`
+- `_run_id`
+
+Bronze payload identity is based on the SHA-256 hash of the exact raw payload bytes.
+
+Silver uses idempotent Delta MERGE operations by dataset business key. Source rows absent from a subsequent revision are not automatically deleted.
+
+Data quality outcomes are persisted in `ops.dq_result`.
+
+The known SRC-001 / SRC-002 Ontario Demand discrepancy remains preserved as a WARN observation:
+
+- Date: 2026-03-20
+- Hour Ending: 1
+- SRC-001: 15,232 MW
+- SRC-002: 13,962 MW
+- Difference: 1,270 MW
+
+Root cause remains unconfirmed

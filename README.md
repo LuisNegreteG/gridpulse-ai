@@ -665,17 +665,17 @@ Fabric-managed workspace definitions will later be stored separately from manual
 * [x] Source catalog
 * [x] Initial data contracts
 * [x] Architecture Decision Records
-* [ ] GitHub/Fabric integration
+* [x] GitHub/Fabric integration
 
 ### Phase 2 — Bronze & Silver Engineering
 
-* [ ] Reusable ingestion framework
-* [ ] Incremental Bronze ingestion
-* [ ] Revision-aware source registry
-* [ ] PySpark transformations
-* [ ] Silver Delta tables
-* [ ] Quarantine handling
-* [ ] Technical lineage metadata
+* [x] Reusable ingestion framework
+* [x] Incremental Bronze ingestion
+* [x] Revision-aware source registry
+* [x] PySpark transformations
+* [x] Silver Delta tables
+* [x] Quarantine handling
+* [x] Technical lineage metadata
 
 ### Phase 3 — Gold, Quality & Orchestration
 
@@ -777,3 +777,50 @@ requirements
 ```
 
 with engineering decisions that can be explained, tested and defended.
+
+## Phase 2 — Bronze & Silver Engineering
+
+Phase 2 implemented the production-oriented ingestion and Silver transformation framework.
+
+### Bronze
+
+- Revision-aware and idempotent ingestion
+- SHA-256 payload fingerprinting
+- Immutable content-addressed raw storage
+- Source registry and ETL run tracking
+- NEW / UNCHANGED / REVISED / RECOVER handling
+- Binary post-write integrity verification
+- Five IESO sources supported through a shared ingestion framework
+
+### Silver
+
+Implemented Delta tables:
+
+- `silver.demand_hourly`
+- `silver.demand_zonal_hourly`
+- `silver.generation_hourly`
+- `silver.price_day_ahead_hourly`
+- `silver.price_realtime_5min`
+
+Silver processing includes:
+
+- source-specific parsing
+- explicit business grains
+- typed schemas
+- technical lineage
+- Delta MERGE idempotency
+- source-permitted null preservation
+- reconciliation observations
+- persistent DQ results in `ops.dq_result`
+
+Latest Day 2 validation:
+
+- Demand: 5,713 rows
+- Zonal Demand: 57,120 rows
+- Generation: 40,008 rows
+- Day-Ahead Price: 24 rows
+- Real-Time Price: 12 rows
+- DQ results: 38
+- DQ ERROR: 0
+- DQ FAIL: 0
+- Cross-source Ontario Demand reconciliation: 5,712 records checked, 1 WARN mismatch.

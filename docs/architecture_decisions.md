@@ -863,3 +863,47 @@ reference the replacement ADR
 rather than rewriting architectural history.
 
 The ADR log therefore describes not only the final architecture but also the reasoning that produced it.
+
+
+## ADR-008 — Use payload identity for immutable Bronze persistence
+
+**Decision**
+
+Bronze payloads are persisted using SHA-256 content identity rather than filename identity.
+
+Physical paths follow the pattern:
+
+`Files/bronze/ieso/<source>/<sha256>/<original_filename>`
+
+`ops.source_file_registry` maintains logical source identity, payload hash, Bronze path, revision state, and lineage.
+
+**Rationale**
+
+Several IESO sources use mutable annual files or mutable aliases whose filenames remain stable while their contents change.
+
+Using payload identity enables:
+
+- revision detection
+- idempotency
+- preservation of historical raw evidence
+- deterministic lineage
+- post-write integrity verification
+
+A filename therefore identifies an upstream source object but does not uniquely identify its payload.
+
+
+## ADR-009 — Silver represents current trusted state by native business grain
+
+**Decision**
+
+Silver tables maintain one current row per native business key using Delta MERGE.
+
+Incoming matching business keys are updated, new keys are inserted and rows absent from a newer source payload are not automatically deleted.
+
+Historical source revisions remain preserved in Bronze.
+
+**Rationale**
+
+The available source contracts do not establish that absence from a later payload represents an authoritative deletion.
+
+This approach preserves raw history while keeping Silver suitable for current-state analytics and prevents unsupported delete semantics.
