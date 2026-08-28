@@ -977,3 +977,21 @@ When interactive BI consumption is implemented, the preferred starting architect
 SQL serving views remain available for SQL consumers and reusable analytical logic but are not required to become semantic-model sources.
 
 Dimensions, additional keys, and relationships will be introduced only when concrete semantic-model requirements justify them.
+
+## ADR-014 — Use Delta Change Data Feed and version watermarks for Gold incremental processing
+
+**Status:** Accepted
+
+Gold incremental processing uses Delta Change Data Feed (CDF) on trusted Silver tables.
+
+Each Gold dataset tracks the last successfully processed Silver Delta version.
+
+A Gold run reads only Silver changes after the stored watermark and up to a fixed ending version captured for that execution.
+
+Changed business keys are resolved back against the current trusted Silver state before Gold MERGE.
+
+The watermark advances only after the Gold transformation and its validation complete successfully.
+
+Because Silver deletion semantics are not defined by ADR-009, unexpected CDF delete events cause the incremental Gold run to fail rather than silently deleting or retaining ambiguous Gold state.
+
+Existing Gold tables provide the validated baseline, so initial watermarks are seeded at the current Silver table versions after CDF is enabled.
