@@ -1213,3 +1213,1001 @@ display(
 # META   "language": "python",
 # META   "language_group": "synapse_pyspark"
 # META }
+
+# CELL ********************
+
+import importlib
+import builtin.gridpulse.gold as gold
+
+importlib.invalidate_caches()
+gold = importlib.reload(gold)
+
+DATASET_NAME = "market_demand_hourly"
+SOURCE_NAME = "ieso_hourly_demand"
+
+# ---------------------------------------------------------
+# Start Gold execution
+# ---------------------------------------------------------
+
+run_id = gold.start_gold_run(
+    spark,
+    SOURCE_NAME,
+)
+
+print("Gold run started:", run_id)
+
+print("\n=== RUNNING STATE ===")
+display(
+    spark.sql(
+        f"""
+        SELECT *
+        FROM ops.etl_run
+        WHERE run_id = '{run_id}'
+        """
+    )
+)
+
+# ---------------------------------------------------------
+# Execute the already validated idempotent Gold operation
+# ---------------------------------------------------------
+
+try:
+    gold.merge_gold_fact(
+        spark,
+        DATASET_NAME,
+    )
+
+    result = gold.validate_gold_fact(
+        spark,
+        DATASET_NAME,
+    )
+
+    gold.finish_gold_run(
+        spark,
+        run_id,
+        status="SUCCESS",
+    )
+
+except Exception as exc:
+    gold.finish_gold_run(
+        spark,
+        run_id,
+        status="FAILED",
+        error_message=str(exc),
+    )
+    raise
+
+
+print("\n=== FINAL STATE ===")
+display(
+    spark.sql(
+        f"""
+        SELECT *
+        FROM ops.etl_run
+        WHERE run_id = '{run_id}'
+        """
+    )
+)
+
+print("\nGold run lifecycle validation passed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import importlib
+from datetime import datetime
+
+from pyspark.sql import Row
+import builtin.gridpulse.gold as gold
+
+importlib.invalidate_caches()
+gold = importlib.reload(gold)
+
+DATASET_NAME = "market_demand_hourly"
+SOURCE_NAME = "ieso_hourly_demand"
+
+contract = gold.GOLD_CONTRACTS[DATASET_NAME]
+
+run_id = gold.start_gold_run(
+    spark,
+    SOURCE_NAME,
+)
+
+print("Gold DQ run started:", run_id)
+
+try:
+    # -----------------------------------------------------
+    # Gold transformation
+    # -----------------------------------------------------
+
+    gold.merge_gold_fact(
+        spark,
+        DATASET_NAME,
+    )
+
+    result = gold.validate_gold_fact(
+        spark,
+        DATASET_NAME,
+    )
+
+    target = spark.table(contract["gold_table"])
+
+    missing_required_lineage = target.filter(
+        " OR ".join(
+            [
+                f"`{column}` IS NULL"
+                for column in gold.REQUIRED_LINEAGE_COLUMNS
+            ]
+        )
+    ).count()
+
+    execution_timestamp = datetime.utcnow()
+
+    # -----------------------------------------------------
+    # Persist Gold DQ evidence
+    # -----------------------------------------------------
+
+    dq_rows = [
+        Row(
+            run_id=run_id,
+            source_name=SOURCE_NAME,
+            dataset_name=contract["gold_table"],
+            rule_id="gold_row_count_matches_silver",
+            rule_category="GOLD_RECONCILIATION",
+            severity="PASS",
+            status="COMPLETED",
+            records_checked=result["silver_rows"],
+            records_failed=0,
+            observed_value=str(result["gold_rows"]),
+            expected_value=str(result["silver_rows"]),
+            execution_timestamp=execution_timestamp,
+            details="Gold row count matches current trusted Silver source."
+        ),
+        Row(
+            run_id=run_id,
+            source_name=SOURCE_NAME,
+            dataset_name=contract["gold_table"],
+            rule_id="gold_missing_rows",
+            rule_category="GOLD_RECONCILIATION",
+            severity="PASS",
+            status="COMPLETED",
+            records_checked=result["silver_rows"],
+            records_failed=result["missing_from_gold"],
+            observed_value=str(result["missing_from_gold"]),
+            expected_value="0",
+            execution_timestamp=execution_timestamp,
+            details="No trusted Silver rows are missing from Gold."
+        ),
+        Row(
+            run_id=run_id,
+            source_name=SOURCE_NAME,
+            dataset_name=contract["gold_table"],
+            rule_id="gold_unexpected_rows",
+            rule_category="GOLD_RECONCILIATION",
+            severity="PASS",
+            status="COMPLETED",
+            records_checked=result["gold_rows"],
+            records_failed=result["unexpected_in_gold"],
+            observed_value=str(result["unexpected_in_gold"]),
+            expected_value="0",
+            execution_timestamp=execution_timestamp,
+            details="Gold contains no rows absent from current trusted Silver state."
+        ),
+        Row(
+            run_id=run_id,
+            source_name=SOURCE_NAME,
+            dataset_name=contract["gold_table"],
+            rule_id="gold_duplicate_business_key",
+            rule_category="STRUCTURE_OR_GRAIN",
+            severity="PASS",
+            status="COMPLETED",
+            records_checked=result["gold_rows"],
+            records_failed=result["duplicate_keys"],
+            observed_value=str(result["duplicate_keys"]),
+            expected_value="0",
+            execution_timestamp=execution_timestamp,
+            details="Gold natural business key remains unique."
+        ),
+        Row(
+            run_id=run_id,
+            source_name=SOURCE_NAME,
+            dataset_name=contract["gold_table"],
+            rule_id="gold_required_lineage",
+            rule_category="LINEAGE",
+            severity="PASS",
+            status="COMPLETED",
+            records_checked=result["gold_rows"],
+            records_failed=missing_required_lineage,
+            observed_value=str(missing_required_lineage),
+            expected_value="0",
+            execution_timestamp=execution_timestamp,
+            details="Required upstream lineage remains populated in Gold."
+        ),
+    ]
+
+    dq_df = spark.createDataFrame(dq_rows)
+
+    dq_df.write \
+        .format("delta") \
+        .mode("append") \
+        .saveAsTable("ops.dq_result")
+
+    gold.finish_gold_run(
+        spark,
+        run_id,
+        status="SUCCESS",
+    )
+
+except Exception as exc:
+    gold.finish_gold_run(
+        spark,
+        run_id,
+        status="FAILED",
+        error_message=str(exc),
+    )
+    raise
+
+
+print("\n=== PERSISTED GOLD DQ ===")
+
+display(
+    spark.sql(
+        f"""
+        SELECT
+            run_id,
+            dataset_name,
+            rule_id,
+            rule_category,
+            severity,
+            status,
+            records_checked,
+            records_failed,
+            observed_value,
+            expected_value
+        FROM ops.dq_result
+        WHERE run_id = '{run_id}'
+        ORDER BY rule_id
+        """
+    )
+)
+
+print("\nGold DQ persistence validation passed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import importlib
+import builtin.gridpulse.gold as gold
+
+importlib.invalidate_caches()
+gold = importlib.reload(gold)
+
+DATASETS = [
+    "market_demand_hourly",
+    "zonal_demand_hourly",
+    "generation_hourly",
+    "day_ahead_price_hourly",
+    "realtime_price_5min",
+]
+
+run_ids = []
+
+for dataset_name in DATASETS:
+    contract = gold.GOLD_CONTRACTS[dataset_name]
+    source_name = contract["source_name"]
+
+    run_id = gold.start_gold_run(
+        spark,
+        source_name,
+    )
+
+    print(f"\nProcessing {dataset_name}")
+    print(f"Run ID: {run_id}")
+
+    try:
+        gold.merge_gold_fact(
+            spark,
+            dataset_name,
+        )
+
+        result = gold.validate_gold_fact(
+            spark,
+            dataset_name,
+        )
+
+        gold.persist_gold_dq(
+            spark,
+            dataset_name,
+            run_id,
+            result,
+        )
+
+        gold.finish_gold_run(
+            spark,
+            run_id,
+            status="SUCCESS",
+        )
+
+        run_ids.append(run_id)
+
+        print(
+            f"SUCCESS | rows={result['gold_rows']} | "
+            f"duplicates={result['duplicate_keys']}"
+        )
+
+    except Exception as exc:
+        gold.finish_gold_run(
+            spark,
+            run_id,
+            status="FAILED",
+            error_message=str(exc),
+        )
+        raise
+
+
+print("\nAll Gold transformations and DQ persistence passed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+from pyspark.sql import functions as F
+
+# ---------------------------------------------------------
+# 1. Latest Gold runs
+# ---------------------------------------------------------
+
+gold_runs = (
+    spark.table("ops.etl_run")
+    .filter(F.col("pipeline_name") == "gold_transform")
+)
+
+print("=== GOLD RUN SUMMARY ===")
+
+display(
+    gold_runs
+    .select(
+        "run_id",
+        "pipeline_name",
+        "source_name",
+        "start_timestamp",
+        "end_timestamp",
+        "status",
+        "error_message",
+    )
+    .orderBy(F.col("start_timestamp").desc())
+    .limit(10)
+)
+
+
+# ---------------------------------------------------------
+# 2. Validate latest successful run per source
+# ---------------------------------------------------------
+
+expected_sources = [
+    "ieso_hourly_demand",
+    "ieso_hourly_zonal_demand",
+    "ieso_generation_by_fuel_hourly",
+    "ieso_day_ahead_ontario_zonal_price",
+    "ieso_realtime_ontario_zonal_price",
+]
+
+latest_successful_runs = (
+    gold_runs
+    .filter(F.col("status") == "SUCCESS")
+    .filter(F.col("source_name").isin(expected_sources))
+    .groupBy("source_name")
+    .agg(
+        F.max("start_timestamp").alias("latest_start_timestamp")
+    )
+)
+
+assert latest_successful_runs.count() == 5, (
+    "Expected one successful Gold execution lineage per source."
+)
+
+print("\nSuccessful Gold source coverage: 5/5")
+
+
+# ---------------------------------------------------------
+# 3. Audit Gold DQ
+# ---------------------------------------------------------
+
+gold_dq = (
+    spark.table("ops.dq_result")
+    .filter(F.col("dataset_name").startswith("gold.fact_"))
+)
+
+print("\n=== GOLD DQ SUMMARY ===")
+
+dq_summary = (
+    gold_dq
+    .groupBy(
+        "run_id",
+        "source_name",
+        "dataset_name",
+    )
+    .agg(
+        F.count("*").alias("dq_results"),
+        F.sum(
+            F.when(F.col("severity") == "FAIL", 1).otherwise(0)
+        ).alias("dq_fail"),
+        F.sum(
+            F.when(F.col("status") == "ERROR", 1).otherwise(0)
+        ).alias("dq_error"),
+    )
+    .orderBy(F.col("run_id").desc())
+)
+
+display(dq_summary)
+
+
+# ---------------------------------------------------------
+# 4. Validate latest pipeline batch
+# ---------------------------------------------------------
+
+latest_gold_run_ids = [
+    row["run_id"]
+    for row in (
+        gold_runs
+        .filter(F.col("status") == "SUCCESS")
+        .filter(F.col("source_name").isin(expected_sources))
+        .orderBy(F.col("start_timestamp").desc())
+        .limit(5)
+        .select("run_id")
+        .collect()
+    )
+]
+
+latest_dq = gold_dq.filter(
+    F.col("run_id").isin(latest_gold_run_ids)
+)
+
+latest_dq_count = latest_dq.count()
+
+latest_fail_count = (
+    latest_dq
+    .filter(F.col("severity") == "FAIL")
+    .count()
+)
+
+latest_error_count = (
+    latest_dq
+    .filter(F.col("status") == "ERROR")
+    .count()
+)
+
+print("\n=== LATEST GOLD BATCH VALIDATION ===")
+print(f"Gold runs checked : {len(latest_gold_run_ids)}")
+print(f"DQ results        : {latest_dq_count}")
+print(f"DQ FAIL           : {latest_fail_count}")
+print(f"DQ ERROR          : {latest_error_count}")
+
+assert len(latest_gold_run_ids) == 5
+assert latest_dq_count == 25
+assert latest_fail_count == 0
+assert latest_error_count == 0
+
+print("\nGold observability audit passed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import copy
+import importlib
+
+from pyspark.sql import functions as F
+
+import builtin.gridpulse.gold as gold
+
+importlib.invalidate_caches()
+gold = importlib.reload(gold)
+
+
+TEST_DATASET = "revision_propagation_test"
+TEST_SOURCE = "ops._test_gold_revision_source"
+TEST_TARGET = "ops._test_gold_revision_target"
+
+SYNTHETIC_HASH = "f" * 64
+SYNTHETIC_RUN_ID = "synthetic-gold-revision-test-run"
+
+
+# ---------------------------------------------------------
+# Clean any artifact left by an interrupted prior test
+# ---------------------------------------------------------
+
+spark.sql(f"DROP TABLE IF EXISTS {TEST_SOURCE}")
+spark.sql(f"DROP TABLE IF EXISTS {TEST_TARGET}")
+
+
+try:
+    # -----------------------------------------------------
+    # 1. Create a one-row synthetic Silver-like source
+    # -----------------------------------------------------
+
+    spark.sql(
+        f"""
+        CREATE TABLE {TEST_SOURCE}
+        USING DELTA
+        AS
+        SELECT *
+        FROM silver.demand_hourly
+        ORDER BY market_date, hour_ending
+        LIMIT 1
+        """
+    )
+
+    original = spark.table(TEST_SOURCE).first()
+
+    original_market_demand = original["market_demand_mw"]
+    original_hash = original["_source_hash"]
+    original_run_id = original["_run_id"]
+
+    print("Original key:",
+          original["market_date"],
+          original["hour_ending"])
+
+    print("Original market demand:", original_market_demand)
+    print("Original hash:", original_hash)
+    print("Original run_id:", original_run_id)
+
+
+    # -----------------------------------------------------
+    # 2. Inject isolated test contract
+    # -----------------------------------------------------
+
+    test_contract = copy.deepcopy(
+        gold.GOLD_CONTRACTS["market_demand_hourly"]
+    )
+
+    test_contract["silver_table"] = TEST_SOURCE
+    test_contract["gold_table"] = TEST_TARGET
+
+    gold.GOLD_CONTRACTS[TEST_DATASET] = test_contract
+
+
+    # -----------------------------------------------------
+    # 3. Initial Gold merge
+    # -----------------------------------------------------
+
+    gold.merge_gold_fact(
+        spark,
+        TEST_DATASET,
+    )
+
+    initial_result = gold.validate_gold_fact(
+        spark,
+        TEST_DATASET,
+    )
+
+    assert initial_result["gold_rows"] == 1
+    assert initial_result["duplicate_keys"] == 0
+
+    print("\nInitial Gold merge passed.")
+
+
+    # -----------------------------------------------------
+    # 4. Simulate a new trusted Silver revision
+    #
+    # Same business key.
+    # Changed measure.
+    # Changed payload lineage.
+    # -----------------------------------------------------
+
+    spark.sql(
+        f"""
+        UPDATE {TEST_SOURCE}
+        SET
+            market_demand_mw =
+                CAST(
+                    market_demand_mw + 1.000
+                    AS DECIMAL(18,3)
+                ),
+            _source_hash = '{SYNTHETIC_HASH}',
+            _run_id = '{SYNTHETIC_RUN_ID}',
+            _ingestion_timestamp = current_timestamp()
+        """
+    )
+
+
+    # -----------------------------------------------------
+    # 5. Run the same production Gold MERGE logic again
+    # -----------------------------------------------------
+
+    gold.merge_gold_fact(
+        spark,
+        TEST_DATASET,
+    )
+
+    revised_result = gold.validate_gold_fact(
+        spark,
+        TEST_DATASET,
+    )
+
+    revised = spark.table(TEST_TARGET).first()
+
+    target_count = spark.table(TEST_TARGET).count()
+
+    duplicate_count = (
+        spark.table(TEST_TARGET)
+        .groupBy("market_date", "hour_ending")
+        .count()
+        .filter(F.col("count") > 1)
+        .count()
+    )
+
+
+    # -----------------------------------------------------
+    # 6. Revision propagation assertions
+    # -----------------------------------------------------
+
+    assert target_count == 1, (
+        "Revision created an additional Gold row."
+    )
+
+    assert duplicate_count == 0, (
+        "Revision produced a duplicate Gold business key."
+    )
+
+    assert revised["market_demand_mw"] == (
+        original_market_demand + 1
+    ), "Revised measure did not propagate to Gold."
+
+    assert revised["_source_hash"] == SYNTHETIC_HASH, (
+        "Revised payload hash did not propagate to Gold."
+    )
+
+    assert revised["_run_id"] == SYNTHETIC_RUN_ID, (
+        "Revised upstream run lineage did not propagate to Gold."
+    )
+
+    assert revised["_source_hash"] != original_hash
+    assert revised["_run_id"] != original_run_id
+
+    assert revised_result["missing_from_gold"] == 0
+    assert revised_result["unexpected_in_gold"] == 0
+
+
+    print("\n=== REVISION PROPAGATION VALIDATION ===")
+    print("Gold rows after revision :", target_count)
+    print("Duplicate business keys :", duplicate_count)
+    print(
+        "Measure updated         :",
+        revised["market_demand_mw"]
+    )
+    print(
+        "Source hash updated     :",
+        revised["_source_hash"] == SYNTHETIC_HASH
+    )
+    print(
+        "Run lineage updated     :",
+        revised["_run_id"] == SYNTHETIC_RUN_ID
+    )
+
+    print("\nGold revision propagation test passed.")
+
+
+finally:
+    # -----------------------------------------------------
+    # 7. Mandatory cleanup
+    # -----------------------------------------------------
+
+    gold.GOLD_CONTRACTS.pop(
+        TEST_DATASET,
+        None,
+    )
+
+    spark.sql(f"DROP TABLE IF EXISTS {TEST_SOURCE}")
+    spark.sql(f"DROP TABLE IF EXISTS {TEST_TARGET}")
+
+    print("\nSynthetic revision-test artifacts removed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import copy
+import importlib
+
+import builtin.gridpulse.gold as gold
+
+importlib.invalidate_caches()
+gold = importlib.reload(gold)
+
+TEST_DATASET = "duplicate_key_test"
+TEST_SOURCE = "ops._test_gold_duplicate_source"
+TEST_TARGET = "ops._test_gold_duplicate_target"
+
+SOURCE_NAME = "synthetic_gold_test"
+
+spark.sql(f"DROP TABLE IF EXISTS {TEST_SOURCE}")
+spark.sql(f"DROP TABLE IF EXISTS {TEST_TARGET}")
+
+run_id = None
+
+try:
+    # -----------------------------------------------------
+    # 1. Create duplicated Silver-like input
+    # -----------------------------------------------------
+
+    base_row = (
+        spark.table("silver.demand_hourly")
+        .orderBy("market_date", "hour_ending")
+        .limit(1)
+    )
+
+    duplicate_source = base_row.unionByName(base_row)
+
+    duplicate_source.write \
+        .format("delta") \
+        .mode("overwrite") \
+        .saveAsTable(TEST_SOURCE)
+
+    assert spark.table(TEST_SOURCE).count() == 2
+
+    # -----------------------------------------------------
+    # 2. Inject isolated test contract
+    # -----------------------------------------------------
+
+    test_contract = copy.deepcopy(
+        gold.GOLD_CONTRACTS["market_demand_hourly"]
+    )
+
+    test_contract["silver_table"] = TEST_SOURCE
+    test_contract["gold_table"] = TEST_TARGET
+    test_contract["source_name"] = SOURCE_NAME
+
+    gold.GOLD_CONTRACTS[TEST_DATASET] = test_contract
+
+    # -----------------------------------------------------
+    # 3. Start Gold execution
+    # -----------------------------------------------------
+
+    run_id = gold.start_gold_run(
+        spark,
+        SOURCE_NAME,
+    )
+
+    try:
+        gold.merge_gold_fact(
+            spark,
+            TEST_DATASET,
+        )
+
+        raise AssertionError(
+            "Expected duplicate-key validation to fail."
+        )
+
+    except AssertionError as exc:
+        if "duplicate business keys detected" not in str(exc):
+            raise
+
+        gold.finish_gold_run(
+            spark,
+            run_id,
+            status="FAILED",
+            error_message=str(exc),
+        )
+
+        print("Expected duplicate-key failure captured:")
+        print(str(exc))
+
+    # -----------------------------------------------------
+    # 4. Validate no Gold write occurred
+    # -----------------------------------------------------
+
+    target_exists = spark.catalog.tableExists(TEST_TARGET)
+
+    assert not target_exists, (
+        "Gold target should not exist after source validation failure."
+    )
+
+    # -----------------------------------------------------
+    # 5. Validate failed execution lineage
+    # -----------------------------------------------------
+
+    run = (
+        spark.table("ops.etl_run")
+        .filter(f"run_id = '{run_id}'")
+        .first()
+    )
+
+    assert run["status"] == "FAILED"
+    assert run["end_timestamp"] is not None
+    assert run["error_message"] is not None
+
+    print("\n=== FAILURE PATH VALIDATION ===")
+    print("Target created :", target_exists)
+    print("Run status     :", run["status"])
+    print("Error recorded :", run["error_message"] is not None)
+
+    print("\nGold failure-path hardening passed.")
+
+finally:
+    gold.GOLD_CONTRACTS.pop(
+        TEST_DATASET,
+        None,
+    )
+
+    spark.sql(f"DROP TABLE IF EXISTS {TEST_SOURCE}")
+    spark.sql(f"DROP TABLE IF EXISTS {TEST_TARGET}")
+
+    print("\nSynthetic failure-test artifacts removed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# MARKDOWN ********************
+
+# ## Final Gold Production Audit
+
+# CELL ********************
+
+import importlib
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+import builtin.gridpulse.gold as gold
+
+importlib.invalidate_caches()
+gold = importlib.reload(gold)
+
+DATASETS = [
+    "market_demand_hourly",
+    "zonal_demand_hourly",
+    "generation_hourly",
+    "day_ahead_price_hourly",
+    "realtime_price_5min",
+]
+
+# ---------------------------------------------------------
+# 1. Final physical Gold regression
+# ---------------------------------------------------------
+
+print("=== FINAL GOLD FACT AUDIT ===")
+
+for dataset_name in DATASETS:
+    result = gold.validate_gold_fact(
+        spark,
+        dataset_name,
+    )
+
+    print(
+        f"{dataset_name}: "
+        f"{result['gold_rows']} rows | "
+        f"missing={result['missing_from_gold']} | "
+        f"unexpected={result['unexpected_in_gold']} | "
+        f"duplicates={result['duplicate_keys']}"
+    )
+
+# ---------------------------------------------------------
+# 2. Latest successful Gold run per production source
+# ---------------------------------------------------------
+
+production_sources = [
+    gold.GOLD_CONTRACTS[name]["source_name"]
+    for name in DATASETS
+]
+
+runs = (
+    spark.table("ops.etl_run")
+    .filter(F.col("pipeline_name") == "gold_transform")
+    .filter(F.col("source_name").isin(production_sources))
+)
+
+window = (
+    Window
+    .partitionBy("source_name")
+    .orderBy(F.col("start_timestamp").desc())
+)
+
+latest_runs = (
+    runs
+    .withColumn("rn", F.row_number().over(window))
+    .filter(F.col("rn") == 1)
+    .drop("rn")
+)
+
+assert latest_runs.count() == 5
+assert latest_runs.filter(F.col("status") != "SUCCESS").count() == 0
+
+print("\nLatest production Gold runs: 5/5 SUCCESS")
+
+# ---------------------------------------------------------
+# 3. Latest production DQ validation
+# ---------------------------------------------------------
+
+latest_run_ids = [
+    row["run_id"]
+    for row in latest_runs.select("run_id").collect()
+]
+
+latest_dq = (
+    spark.table("ops.dq_result")
+    .filter(F.col("run_id").isin(latest_run_ids))
+)
+
+dq_count = latest_dq.count()
+dq_fail = latest_dq.filter(F.col("severity") == "FAIL").count()
+dq_error = latest_dq.filter(F.col("status") == "ERROR").count()
+
+assert dq_count == 25
+assert dq_fail == 0
+assert dq_error == 0
+
+print(f"Latest Gold DQ results : {dq_count}")
+print(f"DQ FAIL                : {dq_fail}")
+print(f"DQ ERROR               : {dq_error}")
+
+# ---------------------------------------------------------
+# 4. Synthetic physical artifact audit
+# ---------------------------------------------------------
+
+ops_tables = spark.sql("SHOW TABLES IN ops")
+
+synthetic_tables = (
+    ops_tables
+    .filter(F.col("tableName").startswith("_test_gold_"))
+    .count()
+)
+
+assert synthetic_tables == 0
+
+print(f"\nSynthetic Gold tables  : {synthetic_tables}")
+
+# ---------------------------------------------------------
+# 5. Production fact inventory
+# ---------------------------------------------------------
+
+gold_tables = spark.sql("SHOW TABLES IN gold")
+
+production_fact_count = (
+    gold_tables
+    .filter(F.col("tableName").startswith("fact_"))
+    .count()
+)
+
+assert production_fact_count == 5
+
+print(f"Production Gold facts  : {production_fact_count}")
+
+print("\nFINAL GOLD PRODUCTION AUDIT PASSED.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
