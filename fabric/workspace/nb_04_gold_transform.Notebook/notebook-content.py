@@ -1144,3 +1144,72 @@ print("BQ readiness audit completed.")
 # META   "language": "python",
 # META   "language_group": "synapse_pyspark"
 # META }
+
+# CELL ********************
+
+from pyspark.sql import functions as F
+
+dq = spark.table("ops.dq_result")
+
+print("=== OPS.DQ_RESULT SCHEMA ===")
+dq.printSchema()
+
+print("\n=== CURRENT DQ SUMMARY ===")
+print("Rows:", dq.count())
+
+display(
+    dq.select(
+        "run_id",
+        "source_name",
+        "dataset_name",
+        "rule_id",
+        "rule_category",
+        "severity",
+        "status",
+        "execution_timestamp",
+    )
+    .orderBy(F.col("execution_timestamp").desc())
+    .limit(20)
+)
+
+print("\n=== RUN_ID USAGE ===")
+
+display(
+    dq.groupBy(
+        "run_id",
+        "source_name",
+        "dataset_name",
+    )
+    .agg(
+        F.count("*").alias("dq_results")
+    )
+    .orderBy(F.col("dq_results").desc())
+    .limit(20)
+)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+etl = spark.table("ops.etl_run")
+
+print("\n=== OPS.ETL_RUN SCHEMA ===")
+etl.printSchema()
+
+display(
+    etl.orderBy(
+        F.col("start_timestamp").desc()
+    ).limit(20)
+)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
