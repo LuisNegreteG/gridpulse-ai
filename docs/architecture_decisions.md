@@ -939,3 +939,25 @@ Additional cross-source or derived Gold tables are not materialized unless repea
 Reusable analytical logic may first be exposed through read-only serving views over Gold facts.
 
 This avoids premature duplication, preserves native grain, and keeps cross-source alignment explicit.
+
+## ADR-012 — Extend ETL run tracking to downstream pipeline executions
+
+**Status:** Accepted
+
+`ops.etl_run` is extended from Bronze ingestion tracking to general GridPulse ETL pipeline execution tracking.
+
+Bronze ingestion runs continue using:
+
+- `pipeline_name = bronze_ingestion`
+- one execution per source acquisition attempt
+
+Gold transformations create independent execution IDs using UUID4 and use:
+
+- `pipeline_name = gold_transform`
+- one execution per source-aligned Gold dataset transformation
+
+Gold DQ results reference the Gold transformation run ID rather than reusing an upstream Bronze/Silver `_run_id`.
+
+Upstream source lineage remains preserved separately in Gold row-level lineage columns.
+
+This keeps execution lineage distinct from source payload lineage and prevents dataset-level Gold DQ results from being associated with an arbitrary historical ingestion run.
