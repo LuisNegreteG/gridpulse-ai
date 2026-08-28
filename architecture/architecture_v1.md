@@ -1306,3 +1306,25 @@ AI-ready
 The architecture is expected to evolve as implementation produces new evidence.
 
 Meaningful changes will be captured through new or superseding ADRs rather than silently changing the design history.
+
+
+## Gold and Serving Layer — Implemented
+
+Trusted Silver datasets are served through five source-aligned Delta facts:
+
+- `gold.fact_market_demand_hourly`
+- `gold.fact_zonal_demand_hourly`
+- `gold.fact_generation_hourly`
+- `gold.fact_day_ahead_price_hourly`
+- `gold.fact_realtime_price_5min`
+
+Reusable SQL serving logic currently includes:
+
+- `gold.vw_daily_peak_demand`
+- `gold.vw_peak_generation_context`
+
+Cross-source physical facts are intentionally deferred until grain alignment, source coverage, and business semantics justify materialization.
+
+Gold executions are independently tracked in `ops.etl_run`, while row-level Gold lineage continues to preserve upstream source execution and payload identity.
+
+Gold DQ evidence is persisted in `ops.dq_result`.

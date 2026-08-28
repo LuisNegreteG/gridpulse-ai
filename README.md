@@ -679,12 +679,12 @@ Fabric-managed workspace definitions will later be stored separately from manual
 
 ### Phase 3 — Gold, Quality & Orchestration
 
-* [ ] Gold analytical model
-* [ ] Reusable DQ framework
-* [ ] ETL run-control framework
-* [ ] Incremental processing
-* [ ] Idempotent MERGE patterns
-* [ ] Fabric orchestration
+* [x] Gold analytical model
+* [x] Reusable DQ framework
+* [x] ETL run-control framework
+* [x] Incremental processing
+* [x] Idempotent MERGE patterns
+* [x] Fabric orchestration
 
 ### Phase 4 — Real-Time Intelligence
 
@@ -709,20 +709,20 @@ Fabric-managed workspace definitions will later be stored separately from manual
 
 ## Current Project Status
 
-**Current phase:** Architecture & Source Discovery
+- Phase 1 — Architecture & Source Discovery: Complete
+- Phase 2 — Bronze & Silver Engineering: Complete
+- Phase 3 — Gold & Serving Engineering: Complete
 
-Five core IESO sources have completed initial technical discovery and candidate-grain validation.
+Current Gold layer:
 
-The next engineering milestones are:
-
-```text
-Fabric/GitHub integration
-→ Bronze/Silver engineering
-→ data quality implementation
-→ Gold modeling
-```
-
-No production-readiness, scalability or AI-accuracy claims are made before they are implemented and measured.
+- 5 source-aligned Delta facts
+- idempotent MERGE processing
+- upstream lineage preservation
+- Gold execution tracking
+- persistent Gold DQ results
+- revision-propagation and failure-path tests
+- trusted cross-source coverage validation
+- 2 lightweight SQL serving views
 
 ---
 

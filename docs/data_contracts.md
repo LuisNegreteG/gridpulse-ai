@@ -2267,3 +2267,54 @@ The known SRC-001 / SRC-002 Ontario Demand discrepancy remains preserved as a WA
 - Difference: 1,270 MW
 
 Root cause remains unconfirmed
+
+## Gold Serving Contracts
+
+Gold represents the current analytical serving state derived from trusted Silver data.
+
+### gold.fact_market_demand_hourly
+Grain: `market_date + hour_ending`
+
+Source:
+`silver.demand_hourly`
+
+### gold.fact_zonal_demand_hourly
+Grain: `market_date + hour_ending + zone`
+
+Source:
+`silver.demand_zonal_hourly`
+
+### gold.fact_generation_hourly
+Grain: `market_date + hour_ending + fuel_type`
+
+Source:
+`silver.generation_hourly`
+
+`output_mwh` remains nullable when permitted by the upstream source contract.
+
+### gold.fact_day_ahead_price_hourly
+Grain: `market_date + hour_ending`
+
+Source:
+`silver.price_day_ahead_hourly`
+
+Price fields remain nullable and may contain valid negative values.
+
+### gold.fact_realtime_price_5min
+Grain:
+`delivery_date + delivery_hour + interval`
+
+Source:
+`silver.price_realtime_5min`
+
+Five-minute intervals are not implicitly aggregated to hourly grain.
+
+### Common Gold behavior
+
+- Natural business keys are preserved.
+- Gold uses idempotent MERGE semantics.
+- Matching keys are updated when trusted Silver state changes.
+- New keys are inserted.
+- Rows absent from newer Silver state are not automatically deleted.
+- Upstream Silver/Bronze lineage is preserved.
+- Cross-source datasets use trusted coverage intersections.

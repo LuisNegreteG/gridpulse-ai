@@ -961,3 +961,19 @@ Gold DQ results reference the Gold transformation run ID rather than reusing an 
 Upstream source lineage remains preserved separately in Gold row-level lineage columns.
 
 This keeps execution lineage distinct from source payload lineage and prevents dataset-level Gold DQ results from being associated with an arbitrary historical ingestion run.
+
+## ADR-013 — Defer the Power BI semantic model until analytical consumption requirements are finalized
+
+**Status:** Accepted
+
+GridPulse does not create a Power BI semantic model during the initial Gold engineering phase.
+
+The current analytical serving layer consists of five source-aligned Gold Delta facts and lightweight SQL serving views.
+
+A semantic model would currently require premature decisions about cross-fact relationships, conformed dimensions, keys, and analytical measures while several cross-source business questions still have incomplete coverage or undefined semantics.
+
+When interactive BI consumption is implemented, the preferred starting architecture is a purpose-built Direct Lake on OneLake semantic model over physical Gold Delta tables.
+
+SQL serving views remain available for SQL consumers and reusable analytical logic but are not required to become semantic-model sources.
+
+Dimensions, additional keys, and relationships will be introduced only when concrete semantic-model requirements justify them.
