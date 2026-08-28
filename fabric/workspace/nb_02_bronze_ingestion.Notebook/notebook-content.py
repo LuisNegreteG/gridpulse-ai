@@ -1427,3 +1427,253 @@ print(f"Running ETL runs: {running_runs}")
 # META   "language": "python",
 # META   "language_group": "synapse_pyspark"
 # META }
+
+# CELL ********************
+
+import os
+
+from builtin.gridpulse.bronze import (
+    compute_sha256,
+    build_bronze_path,
+    persist_bronze_payload,
+)
+
+
+test_payload = b"gridpulse-integrity-failure-test"
+
+real_hash = compute_sha256(test_payload)
+wrong_hash = "f" * 64
+
+test_path = build_bronze_path(
+    bronze_base_path="Files/bronze/_tests/integrity",
+    source_hash=real_hash,
+    source_file="integrity_test.bin",
+)
+
+local_path = f"/lakehouse/default/{test_path}"
+
+failure_detected = False
+
+try:
+    persist_bronze_payload(
+        payload_bytes=test_payload,
+        bronze_path=test_path,
+        expected_hash=wrong_hash,
+    )
+
+except RuntimeError as exc:
+    failure_detected = True
+
+    assert "SHA-256" in str(exc)
+
+    print("Expected integrity failure detected.")
+    print(str(exc))
+
+finally:
+    # Remove the synthetic test artifact.
+    if os.path.exists(local_path):
+        os.remove(local_path)
+
+    parent_dir = os.path.dirname(local_path)
+
+    if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
+        os.rmdir(parent_dir)
+
+
+assert failure_detected
+
+print("Bronze integrity failure test passed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+# MAGIC %%sql
+# MAGIC DROP TABLE IF EXISTS ops.source_file_registry_recovery_test;
+# MAGIC 
+# MAGIC CREATE TABLE ops.source_file_registry_recovery_test (
+# MAGIC     source_name STRING NOT NULL,
+# MAGIC     logical_source_key STRING NOT NULL,
+# MAGIC     source_url STRING NOT NULL,
+# MAGIC     source_file STRING NOT NULL,
+# MAGIC     source_version STRING,
+# MAGIC     file_size BIGINT NOT NULL,
+# MAGIC     source_hash STRING NOT NULL,
+# MAGIC     source_created_at STRING,
+# MAGIC     bronze_path STRING,
+# MAGIC     first_seen_timestamp TIMESTAMP NOT NULL,
+# MAGIC     last_seen_timestamp TIMESTAMP NOT NULL,
+# MAGIC     processing_status STRING NOT NULL,
+# MAGIC     run_id STRING NOT NULL
+# MAGIC )
+# MAGIC USING DELTA;
+
+# METADATA ********************
+
+# META {
+# META   "language": "sparksql",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import os
+import uuid
+
+import builtin.gridpulse.registry as registry
+import builtin.gridpulse.bronze as bronze
+
+
+TEST_TABLE = "ops.source_file_registry_recovery_test"
+
+test_payload = b"gridpulse-recovery-test"
+test_hash = bronze.compute_sha256(test_payload)
+
+test_key = "test_source|year=2026"
+test_file = "recovery_test.bin"
+
+test_bronze_path = bronze.build_bronze_path(
+    bronze_base_path="Files/bronze/_tests/recovery",
+    source_hash=test_hash,
+    source_file=test_file,
+)
+
+first_run_id = str(uuid.uuid4())
+
+metadata = {
+    "source_name": "test_source",
+    "logical_source_key": test_key,
+    "source_url": "https://example.invalid/recovery-test",
+    "source_file": test_file,
+    "source_version": None,
+    "file_size": len(test_payload),
+    "source_hash": test_hash,
+    "source_created_at": None,
+    "run_id": first_run_id,
+}
+
+
+# 1. Initial attempt → PENDING
+registry.register_payload_pending(
+    spark=spark,
+    payload_metadata=metadata,
+    table_name=TEST_TABLE,
+)
+
+# 2. Simulate failed processing
+registry.finalize_payload_failed(
+    spark=spark,
+    logical_source_key=test_key,
+    source_hash=test_hash,
+    table_name=TEST_TABLE,
+)
+
+classification = registry.classify_payload(
+    spark=spark,
+    logical_source_key=test_key,
+    source_hash=test_hash,
+    table_name=TEST_TABLE,
+)
+
+assert classification == "RECOVER"
+
+print(f"After failure classification: {classification}")
+
+
+# 3. Retry same payload
+second_run_id = str(uuid.uuid4())
+
+metadata["run_id"] = second_run_id
+
+registry.register_payload_pending(
+    spark=spark,
+    payload_metadata=metadata,
+    table_name=TEST_TABLE,
+)
+
+pending_row = (
+    spark.table(TEST_TABLE)
+    .collect()[0]
+)
+
+assert pending_row["processing_status"] == "PENDING"
+
+
+# 4. Persist and verify Bronze payload
+write_result = bronze.persist_bronze_payload(
+    payload_bytes=test_payload,
+    bronze_path=test_bronze_path,
+    expected_hash=test_hash,
+)
+
+# 5. Finalize recovery successfully
+registry.finalize_payload_success(
+    spark=spark,
+    logical_source_key=test_key,
+    source_hash=test_hash,
+    bronze_path=test_bronze_path,
+    table_name=TEST_TABLE,
+)
+
+final_row = (
+    spark.table(TEST_TABLE)
+    .collect()[0]
+)
+
+assert final_row["processing_status"] == "SUCCESS"
+assert final_row["bronze_path"] == test_bronze_path
+
+final_classification = registry.classify_payload(
+    spark=spark,
+    logical_source_key=test_key,
+    source_hash=test_hash,
+    table_name=TEST_TABLE,
+)
+
+assert final_classification == "UNCHANGED"
+
+print("Recovery flow: FAILED → RECOVER → PENDING → SUCCESS")
+print(f"Final classification: {final_classification}")
+print("Bronze recovery validation passed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+local_test_path = (
+    f"/lakehouse/default/{test_bronze_path}"
+)
+
+if os.path.exists(local_test_path):
+    os.remove(local_test_path)
+
+print("Synthetic Bronze recovery artifact removed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+# MAGIC %%sql
+# MAGIC DROP TABLE IF EXISTS ops.source_file_registry_recovery_test;
+
+# METADATA ********************
+
+# META {
+# META   "language": "sparksql",
+# META   "language_group": "synapse_pyspark"
+# META }
