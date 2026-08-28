@@ -907,3 +907,23 @@ Historical source revisions remain preserved in Bronze.
 The available source contracts do not establish that absence from a later payload represents an authoritative deletion.
 
 This approach preserves raw history while keeping Silver suitable for current-state analytics and prevents unsupported delete semantics.
+
+## ADR-010 — Preserve source-aligned analytical facts in Gold
+
+**Status:** Accepted
+
+Gold facts preserve the validated analytical grain and independent lineage of each trusted Silver dataset.
+
+Initial Gold facts are:
+
+- `gold.fact_market_demand_hourly`
+- `gold.fact_zonal_demand_hourly`
+- `gold.fact_generation_hourly`
+- `gold.fact_day_ahead_price_hourly`
+- `gold.fact_realtime_price_5min`
+
+Cross-source datasets are not materialized unless their grain alignment, business semantics, and trusted coverage intersection are explicitly defined and validated.
+
+This prevents silent grain multiplication, manufactured observations, ambiguous lineage, and coupling between sources with different revision and coverage histories.
+
+Natural business keys are retained. Surrogate keys and dimensions are deferred until a concrete serving requirement justifies them.
