@@ -927,3 +927,15 @@ Cross-source datasets are not materialized unless their grain alignment, busines
 This prevents silent grain multiplication, manufactured observations, ambiguous lineage, and coupling between sources with different revision and coverage histories.
 
 Natural business keys are retained. Surrogate keys and dimensions are deferred until a concrete serving requirement justifies them.
+
+## ADR-011 — Use lightweight serving views before derived Gold materialization
+
+**Status:** Accepted
+
+The five source-aligned Gold facts remain the physical analytical serving layer.
+
+Additional cross-source or derived Gold tables are not materialized unless repeated analytical use, performance requirements, or validated business semantics justify physical persistence.
+
+Reusable analytical logic may first be exposed through read-only serving views over Gold facts.
+
+This avoids premature duplication, preserves native grain, and keeps cross-source alignment explicit.
