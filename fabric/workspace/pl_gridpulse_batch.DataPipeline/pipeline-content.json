@@ -5,7 +5,8 @@
         "type": "TridentNotebook",
         "typeProperties": {
           "notebookId": "f35d15b2-2bb8-93b5-4b28-5efd526c462e",
-          "workspaceId": "00000000-0000-0000-0000-000000000000"
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "sessionTag": "gridpulse_batch"
         },
         "policy": {
           "timeout": "0.12:00:00",
@@ -28,7 +29,8 @@
         "type": "TridentNotebook",
         "typeProperties": {
           "notebookId": "62314e07-d388-b3f1-4838-6e2a6fbefd22",
-          "workspaceId": "00000000-0000-0000-0000-000000000000"
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "sessionTag": "gridpulse_batch"
         },
         "policy": {
           "timeout": "0.12:00:00",
@@ -44,7 +46,8 @@
         "type": "TridentNotebook",
         "typeProperties": {
           "notebookId": "8bddf8d7-0fd9-92d3-46e9-facc889fd4d7",
-          "workspaceId": "00000000-0000-0000-0000-000000000000"
+          "workspaceId": "00000000-0000-0000-0000-000000000000",
+          "sessionTag": "gridpulse_batch"
         },
         "policy": {
           "timeout": "0.12:00:00",
