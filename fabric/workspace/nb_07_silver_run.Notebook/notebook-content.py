@@ -756,15 +756,140 @@ print("\nGRIDPULSE SILVER RUN PASSED.")
 
 # CELL ********************
 
-import inspect
-import importlib
+SILVER_TABLES = [
+    "silver.demand_hourly",
+    "silver.demand_zonal_hourly",
+    "silver.generation_hourly",
+    "silver.price_day_ahead_hourly",
+    "silver.price_realtime_5min",
+]
 
-import builtin.gridpulse.silver as silver
+print("=== SILVER STEADY-STATE AUDIT ===")
 
-importlib.invalidate_caches()
-silver = importlib.reload(silver)
+for table_name in SILVER_TABLES:
 
-print(inspect.getsource(silver.merge_into_silver))
+    history = spark.sql(
+        f"DESCRIBE HISTORY {table_name}"
+    )
+
+    latest = (
+        history
+        .select(
+            "version",
+            "operation",
+            "operationMetrics",
+        )
+        .orderBy("version", ascending=False)
+        .first()
+    )
+
+    latest_version = int(latest["version"])
+    metrics = latest["operationMetrics"] or {}
+
+    # Read only Change Data Feed emitted by the latest Delta commit.
+    cdf_latest = (
+        spark.read
+        .format("delta")
+        .option("readChangeFeed", "true")
+        .option("startingVersion", latest_version)
+        .option("endingVersion", latest_version)
+        .table(table_name)
+    )
+
+    cdf_rows = cdf_latest.count()
+
+    print(f"\n{table_name}")
+    print(f"Latest version       : {latest_version}")
+    print(f"Latest operation     : {latest['operation']}")
+    print(
+        "Target rows updated :",
+        metrics.get("numTargetRowsUpdated", "N/A")
+    )
+    print(
+        "Target rows inserted:",
+        metrics.get("numTargetRowsInserted", "N/A")
+    )
+    print(
+        "Target rows deleted :",
+        metrics.get("numTargetRowsDeleted", "N/A")
+    )
+    print(f"CDF rows latest commit: {cdf_rows}")
+
+print("\nSilver steady-state audit completed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+SILVER_TABLES = [
+    "silver.demand_hourly",
+    "silver.demand_zonal_hourly",
+    "silver.generation_hourly",
+    "silver.price_day_ahead_hourly",
+    "silver.price_realtime_5min",
+]
+
+versions_before = {}
+
+print("=== BEFORE NO-OP RUN ===")
+
+for table_name in SILVER_TABLES:
+    version = int(
+        spark.sql(
+            f"DESCRIBE HISTORY {table_name} LIMIT 1"
+        )
+        .select("version")
+        .first()[0]
+    )
+
+    versions_before[table_name] = version
+    print(f"{table_name}: {version}")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+print("=== AFTER NO-OP RUN ===")
+
+all_unchanged = True
+
+for table_name in SILVER_TABLES:
+    version_after = int(
+        spark.sql(
+            f"DESCRIBE HISTORY {table_name} LIMIT 1"
+        )
+        .select("version")
+        .first()[0]
+    )
+
+    version_before = versions_before[table_name]
+
+    changed = version_after != version_before
+
+    print(
+        f"{table_name}: "
+        f"{version_before} -> {version_after} | "
+        f"new_commit={changed}"
+    )
+
+    if changed:
+        all_unchanged = False
+
+assert all_unchanged, (
+    "At least one Silver table created a commit during an unchanged run."
+)
+
+print("\nSILVER STEADY-STATE NO-OP PASSED.")
 
 # METADATA ********************
 
