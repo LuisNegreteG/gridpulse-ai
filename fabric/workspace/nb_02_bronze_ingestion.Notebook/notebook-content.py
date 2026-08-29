@@ -1677,3 +1677,51 @@ print("Synthetic Bronze recovery artifact removed.")
 # META   "language": "sparksql",
 # META   "language_group": "synapse_pyspark"
 # META }
+
+# CELL ********************
+
+import inspect
+import importlib
+
+import builtin.gridpulse.orchestration as orchestration
+import builtin.gridpulse.sources as sources
+
+importlib.invalidate_caches()
+orchestration = importlib.reload(orchestration)
+sources = importlib.reload(sources)
+
+print("=== ORCHESTRATION PUBLIC API ===")
+
+for name, obj in inspect.getmembers(orchestration):
+    if inspect.isfunction(obj) and not name.startswith("_"):
+        print(name, inspect.signature(obj))
+
+print("\n=== SOURCES PUBLIC API ===")
+
+for name, obj in inspect.getmembers(sources):
+    if not name.startswith("_"):
+        print(name, type(obj).__name__)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+from builtin.gridpulse.sources import SOURCE_CONFIGS
+
+print("=== SOURCE CONFIG STRUCTURE ===")
+
+for source_name, config in SOURCE_CONFIGS.items():
+    print(f"\n{source_name}")
+    print(config)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
