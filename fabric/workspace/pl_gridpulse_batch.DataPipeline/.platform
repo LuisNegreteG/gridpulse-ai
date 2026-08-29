@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "DataPipeline",
+    "displayName": "pl_gridpulse_batch"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "658918f0-50d5-a09f-4d3e-c09a1ae60118"
+  }
+}

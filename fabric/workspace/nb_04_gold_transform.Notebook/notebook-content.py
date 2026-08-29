@@ -2211,3 +2211,511 @@ print("\nFINAL GOLD PRODUCTION AUDIT PASSED.")
 # META   "language": "python",
 # META   "language_group": "synapse_pyspark"
 # META }
+
+# CELL ********************
+
+from pyspark.sql import functions as F
+
+
+DATASETS = [
+    {
+        "dataset_name": "market_demand_hourly",
+        "source_table": "silver.demand_hourly",
+        "target_table": "gold.fact_market_demand_hourly",
+    },
+    {
+        "dataset_name": "zonal_demand_hourly",
+        "source_table": "silver.demand_zonal_hourly",
+        "target_table": "gold.fact_zonal_demand_hourly",
+    },
+    {
+        "dataset_name": "generation_hourly",
+        "source_table": "silver.generation_hourly",
+        "target_table": "gold.fact_generation_hourly",
+    },
+    {
+        "dataset_name": "day_ahead_price_hourly",
+        "source_table": "silver.price_day_ahead_hourly",
+        "target_table": "gold.fact_day_ahead_price_hourly",
+    },
+    {
+        "dataset_name": "realtime_price_5min",
+        "source_table": "silver.price_realtime_5min",
+        "target_table": "gold.fact_realtime_price_5min",
+    },
+]
+
+
+# ---------------------------------------------------------
+# 1. Enable Delta Change Data Feed on Silver
+# ---------------------------------------------------------
+
+for item in DATASETS:
+    spark.sql(
+        f"""
+        ALTER TABLE {item['source_table']}
+        SET TBLPROPERTIES (
+            delta.enableChangeDataFeed = true
+        )
+        """
+    )
+
+print("CDF enabled on all five Silver tables.")
+
+
+# ---------------------------------------------------------
+# 2. Create Gold incremental watermark registry
+# ---------------------------------------------------------
+
+spark.sql("""
+CREATE TABLE IF NOT EXISTS ops.pipeline_watermark (
+    pipeline_name STRING,
+    dataset_name STRING,
+    source_table STRING,
+    target_table STRING,
+    last_processed_version BIGINT,
+    last_successful_run_id STRING,
+    updated_timestamp TIMESTAMP
+)
+USING DELTA
+""")
+
+
+# ---------------------------------------------------------
+# 3. Capture current Silver versions AFTER enabling CDF
+# ---------------------------------------------------------
+
+baseline_rows = []
+
+for item in DATASETS:
+    current_version = (
+        spark.sql(
+            f"""
+            DESCRIBE HISTORY {item['source_table']}
+            LIMIT 1
+            """
+        )
+        .select("version")
+        .first()[0]
+    )
+
+    baseline_rows.append(
+        (
+            "gold_transform",
+            item["dataset_name"],
+            item["source_table"],
+            item["target_table"],
+            int(current_version),
+        )
+    )
+
+    print(
+        f"{item['dataset_name']}: "
+        f"baseline version={current_version}"
+    )
+
+
+baseline_df = spark.createDataFrame(
+    baseline_rows,
+    [
+        "pipeline_name",
+        "dataset_name",
+        "source_table",
+        "target_table",
+        "last_processed_version",
+    ],
+)
+
+baseline_df.createOrReplaceTempView(
+    "stg_gold_watermark_baseline"
+)
+
+
+# ---------------------------------------------------------
+# 4. Seed watermarks idempotently
+# ---------------------------------------------------------
+
+spark.sql("""
+MERGE INTO ops.pipeline_watermark AS target
+USING stg_gold_watermark_baseline AS source
+
+ON  target.pipeline_name = source.pipeline_name
+AND target.dataset_name = source.dataset_name
+
+WHEN NOT MATCHED THEN INSERT (
+    pipeline_name,
+    dataset_name,
+    source_table,
+    target_table,
+    last_processed_version,
+    last_successful_run_id,
+    updated_timestamp
+)
+VALUES (
+    source.pipeline_name,
+    source.dataset_name,
+    source.source_table,
+    source.target_table,
+    source.last_processed_version,
+    NULL,
+    current_timestamp()
+)
+""")
+
+
+# ---------------------------------------------------------
+# 5. Validate CDF property and watermark state
+# ---------------------------------------------------------
+
+for item in DATASETS:
+    detail = (
+        spark.sql(
+            f"DESCRIBE DETAIL {item['source_table']}"
+        )
+        .select("properties")
+        .first()[0]
+    )
+
+    assert (
+        detail.get("delta.enableChangeDataFeed") == "true"
+    ), f"CDF not enabled for {item['source_table']}"
+
+watermarks = spark.table("ops.pipeline_watermark").filter(
+    F.col("pipeline_name") == "gold_transform"
+)
+
+assert watermarks.count() == 5
+
+print("\n=== GOLD INCREMENTAL WATERMARKS ===")
+
+display(
+    watermarks.select(
+        "dataset_name",
+        "source_table",
+        "target_table",
+        "last_processed_version",
+        "last_successful_run_id",
+        "updated_timestamp",
+    )
+    .orderBy("dataset_name")
+)
+
+print("\nGold incremental baseline initialized.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import copy
+import importlib
+
+import builtin.gridpulse.gold as gold
+
+importlib.invalidate_caches()
+gold = importlib.reload(gold)
+
+TEST_DATASET = "incremental_gold_test"
+TEST_SOURCE = "ops._test_incremental_gold_source"
+TEST_TARGET = "ops._test_incremental_gold_target"
+TEST_SOURCE_NAME = "synthetic_incremental_gold"
+
+SYNTHETIC_HASH = "a" * 64
+SYNTHETIC_UPSTREAM_RUN = "synthetic-upstream-revision"
+
+test_run_id = None
+
+# Clean leftovers from interrupted prior test.
+spark.sql(f"DROP TABLE IF EXISTS {TEST_SOURCE}")
+spark.sql(f"DROP TABLE IF EXISTS {TEST_TARGET}")
+
+spark.sql(
+    f"""
+    DELETE FROM ops.pipeline_watermark
+    WHERE pipeline_name = 'gold_transform'
+      AND dataset_name = '{TEST_DATASET}'
+    """
+)
+
+try:
+    # -----------------------------------------------------
+    # 1. Build isolated Silver-like source
+    # -----------------------------------------------------
+
+    (
+        spark.table("silver.demand_hourly")
+        .orderBy("market_date", "hour_ending")
+        .limit(1)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable(TEST_SOURCE)
+    )
+
+    spark.sql(
+        f"""
+        ALTER TABLE {TEST_SOURCE}
+        SET TBLPROPERTIES (
+            delta.enableChangeDataFeed = true
+        )
+        """
+    )
+
+    # -----------------------------------------------------
+    # 2. Inject isolated Gold contract
+    # -----------------------------------------------------
+
+    test_contract = copy.deepcopy(
+        gold.GOLD_CONTRACTS["market_demand_hourly"]
+    )
+
+    test_contract["silver_table"] = TEST_SOURCE
+    test_contract["gold_table"] = TEST_TARGET
+    test_contract["source_name"] = TEST_SOURCE_NAME
+
+    gold.GOLD_CONTRACTS[TEST_DATASET] = test_contract
+
+    # Initial full baseline Gold state.
+    gold.merge_gold_fact(
+        spark,
+        TEST_DATASET,
+    )
+
+    baseline_version = gold.get_current_delta_version(
+        spark,
+        TEST_SOURCE,
+    )
+
+    # -----------------------------------------------------
+    # 3. Seed synthetic watermark
+    # -----------------------------------------------------
+
+    spark.sql(
+        f"""
+        INSERT INTO ops.pipeline_watermark
+        VALUES (
+            'gold_transform',
+            '{TEST_DATASET}',
+            '{TEST_SOURCE}',
+            '{TEST_TARGET}',
+            {baseline_version},
+            NULL,
+            current_timestamp()
+        )
+        """
+    )
+
+    original = spark.table(TEST_TARGET).first()
+
+    # -----------------------------------------------------
+    # 4. Simulate trusted Silver revision
+    # -----------------------------------------------------
+
+    spark.sql(
+        f"""
+        UPDATE {TEST_SOURCE}
+        SET
+            market_demand_mw =
+                CAST(
+                    market_demand_mw + 1.000
+                    AS DECIMAL(18,3)
+                ),
+            _source_hash = '{SYNTHETIC_HASH}',
+            _run_id = '{SYNTHETIC_UPSTREAM_RUN}',
+            _ingestion_timestamp = current_timestamp()
+        """
+    )
+
+    # -----------------------------------------------------
+    # 5. Start incremental Gold run
+    # -----------------------------------------------------
+
+    test_run_id = gold.start_gold_run(
+        spark,
+        TEST_SOURCE_NAME,
+    )
+
+    increment = gold.read_gold_increment(
+        spark,
+        TEST_DATASET,
+    )
+
+    print("=== INCREMENTAL READ ===")
+    print(
+        "Previous version :",
+        increment["previous_version"]
+    )
+    print(
+        "Ending version   :",
+        increment["ending_version"]
+    )
+    print(
+        "CDF rows         :",
+        increment["cdf_rows"]
+    )
+    print(
+        "Changed keys     :",
+        increment["changed_keys"]
+    )
+    print(
+        "Delete events    :",
+        increment["delete_events"]
+    )
+
+    assert increment["has_new_version"]
+    assert increment["changed_keys"] == 1
+    assert increment["delete_events"] == 0
+
+    processed_rows = gold.merge_gold_increment(
+        spark,
+        TEST_DATASET,
+        increment["source_df"],
+    )
+
+    assert processed_rows == 1
+
+    # -----------------------------------------------------
+    # 6. Validate revised Gold state
+    # -----------------------------------------------------
+
+    revised = spark.table(TEST_TARGET).first()
+
+    assert spark.table(TEST_TARGET).count() == 1
+
+    assert revised["market_demand_mw"] == (
+        original["market_demand_mw"] + 1
+    )
+
+    assert revised["_source_hash"] == SYNTHETIC_HASH
+    assert revised["_run_id"] == SYNTHETIC_UPSTREAM_RUN
+
+    # -----------------------------------------------------
+    # 7. Advance watermark only after successful validation
+    # -----------------------------------------------------
+
+    gold.advance_gold_watermark(
+        spark,
+        TEST_DATASET,
+        increment["previous_version"],
+        increment["ending_version"],
+        test_run_id,
+    )
+
+    gold.finish_gold_run(
+        spark,
+        test_run_id,
+        status="SUCCESS",
+    )
+
+    watermark = (
+        spark.table("ops.pipeline_watermark")
+        .filter(
+            (F.col("pipeline_name") == "gold_transform")
+            & (F.col("dataset_name") == TEST_DATASET)
+        )
+        .first()
+    )
+
+    assert (
+        watermark["last_processed_version"]
+        == increment["ending_version"]
+    )
+
+    assert (
+        watermark["last_successful_run_id"]
+        == test_run_id
+    )
+
+    print("\n=== INCREMENTAL VALIDATION ===")
+    print("Rows processed     :", processed_rows)
+    print("Gold rows          :", spark.table(TEST_TARGET).count())
+    print("Measure updated    :", revised["market_demand_mw"])
+    print("Hash propagated    :", revised["_source_hash"] == SYNTHETIC_HASH)
+    print("Watermark advanced :", True)
+
+    print("\nGold incremental processing test passed.")
+
+finally:
+    gold.GOLD_CONTRACTS.pop(
+        TEST_DATASET,
+        None,
+    )
+
+    spark.sql(f"DROP TABLE IF EXISTS {TEST_SOURCE}")
+    spark.sql(f"DROP TABLE IF EXISTS {TEST_TARGET}")
+
+    spark.sql(
+        f"""
+        DELETE FROM ops.pipeline_watermark
+        WHERE pipeline_name = 'gold_transform'
+          AND dataset_name = '{TEST_DATASET}'
+        """
+    )
+
+    if test_run_id is not None:
+        spark.sql(
+            f"""
+            DELETE FROM ops.etl_run
+            WHERE run_id = '{test_run_id}'
+            """
+        )
+
+    print("\nSynthetic incremental-test artifacts removed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import importlib
+
+import builtin.gridpulse.gold as gold
+
+importlib.invalidate_caches()
+gold = importlib.reload(gold)
+
+DATASETS = [
+    "market_demand_hourly",
+    "zonal_demand_hourly",
+    "generation_hourly",
+    "day_ahead_price_hourly",
+    "realtime_price_5min",
+]
+
+results = []
+
+print("=== PRODUCTION INCREMENTAL GOLD RUN ===")
+
+for dataset_name in DATASETS:
+    result = gold.run_incremental_gold_dataset(
+        spark,
+        dataset_name,
+    )
+
+    results.append(result)
+
+    print(
+        f"{dataset_name} | "
+        f"{result['previous_version']} -> {result['ending_version']} | "
+        f"CDF={result['cdf_rows']} | "
+        f"keys={result['changed_keys']} | "
+        f"processed={result['processed_rows']} | "
+        f"status={result['status']}"
+    )
+
+print("\nAll production incremental Gold runs passed.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
