@@ -1760,7 +1760,17 @@ Eventhouse complements, but does not replace, immutable Bronze evidence or trust
 
 Every published event must retain sufficient lineage to resolve back to the exact Bronze source payload that produced it.
 
+### Technical Event Lineage
 
+Each published Real-Time event retains:
+
+- `source_hash`: SHA-256 of the exact Bronze XML payload;
+- `bronze_first_seen_at_utc`: UTC timestamp when that exact payload hash was first registered in Bronze;
+- `publisher_run_id`: identifier of the publisher execution;
+- `poll_id`: identifier of the source poll;
+- `event_created_at_utc`: UTC timestamp when the immutable event payload was constructed.
+
+`bronze_first_seen_at_utc` is not asserted to be the exact HTTP retrieval instant. GridPulse preserves the semantics of the existing Bronze registry rather than relabeling it as source retrieval time.
 ---
 
 # 11. Cross-Source Contracts
