@@ -2719,3 +2719,208 @@ print("\nAll production incremental Gold runs passed.")
 # META   "language": "python",
 # META   "language_group": "synapse_pyspark"
 # META }
+
+# MARKDOWN ********************
+
+# ### End-to-end Orchestation Audit
+
+# CELL ********************
+
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+print("=== GRIDPULSE END-TO-END ORCHESTRATION AUDIT ===")
+
+
+# ---------------------------------------------------------
+# 1. Production table inventory and reconciliation
+# ---------------------------------------------------------
+
+FACTS = {
+    "gold.fact_market_demand_hourly":
+        ["market_date", "hour_ending"],
+
+    "gold.fact_zonal_demand_hourly":
+        ["market_date", "hour_ending", "zone"],
+
+    "gold.fact_generation_hourly":
+        ["market_date", "hour_ending", "fuel_type"],
+
+    "gold.fact_day_ahead_price_hourly":
+        ["market_date", "hour_ending"],
+
+    "gold.fact_realtime_price_5min":
+        ["delivery_date", "delivery_hour", "interval"],
+}
+
+for table_name, keys in FACTS.items():
+
+    df = spark.table(table_name)
+
+    rows = df.count()
+
+    duplicates = (
+        df.groupBy(*keys)
+        .count()
+        .filter(F.col("count") > 1)
+        .count()
+    )
+
+    assert duplicates == 0
+
+    print(
+        f"{table_name}: "
+        f"{rows:,} rows | duplicates={duplicates}"
+    )
+
+
+# ---------------------------------------------------------
+# 2. Silver -> Gold exact reconciliation
+# ---------------------------------------------------------
+
+pairs = [
+    (
+        "silver.demand_hourly",
+        "gold.fact_market_demand_hourly",
+    ),
+    (
+        "silver.demand_zonal_hourly",
+        "gold.fact_zonal_demand_hourly",
+    ),
+    (
+        "silver.generation_hourly",
+        "gold.fact_generation_hourly",
+    ),
+    (
+        "silver.price_day_ahead_hourly",
+        "gold.fact_day_ahead_price_hourly",
+    ),
+    (
+        "silver.price_realtime_5min",
+        "gold.fact_realtime_price_5min",
+    ),
+]
+
+for silver_table, gold_table in pairs:
+
+    silver_count = spark.table(silver_table).count()
+    gold_count = spark.table(gold_table).count()
+
+    assert silver_count == gold_count
+
+    print(
+        f"{silver_table} -> {gold_table}: "
+        f"{silver_count:,}/{gold_count:,} | OK"
+    )
+
+
+# ---------------------------------------------------------
+# 3. Latest Gold execution per production source
+# ---------------------------------------------------------
+
+production_sources = [
+    "ieso_hourly_demand",
+    "ieso_hourly_zonal_demand",
+    "ieso_generation_by_fuel_hourly",
+    "ieso_day_ahead_ontario_zonal_price",
+    "ieso_realtime_ontario_zonal_price",
+]
+
+runs = (
+    spark.table("ops.etl_run")
+    .filter(F.col("pipeline_name") == "gold_transform")
+    .filter(F.col("source_name").isin(production_sources))
+)
+
+window = (
+    Window
+    .partitionBy("source_name")
+    .orderBy(F.col("start_timestamp").desc())
+)
+
+latest_runs = (
+    runs
+    .withColumn("rn", F.row_number().over(window))
+    .filter(F.col("rn") == 1)
+    .drop("rn")
+)
+
+assert latest_runs.count() == 5
+assert latest_runs.filter(
+    F.col("status") != "SUCCESS"
+).count() == 0
+
+print("\nLatest Gold executions: 5/5 SUCCESS")
+
+
+# ---------------------------------------------------------
+# 4. Latest Gold DQ
+# ---------------------------------------------------------
+
+latest_run_ids = [
+    row["run_id"]
+    for row in latest_runs.select("run_id").collect()
+]
+
+latest_dq = (
+    spark.table("ops.dq_result")
+    .filter(F.col("run_id").isin(latest_run_ids))
+)
+
+dq_count = latest_dq.count()
+dq_fail = latest_dq.filter(
+    F.col("severity") == "FAIL"
+).count()
+dq_error = latest_dq.filter(
+    F.col("status") == "ERROR"
+).count()
+
+assert dq_count == 25
+assert dq_fail == 0
+assert dq_error == 0
+
+print(f"Gold DQ results : {dq_count}")
+print(f"Gold DQ FAIL    : {dq_fail}")
+print(f"Gold DQ ERROR   : {dq_error}")
+
+
+# ---------------------------------------------------------
+# 5. Incremental watermark state
+# ---------------------------------------------------------
+
+watermarks = (
+    spark.table("ops.pipeline_watermark")
+    .filter(F.col("pipeline_name") == "gold_transform")
+)
+
+assert watermarks.count() == 5
+
+assert watermarks.filter(
+    F.col("last_successful_run_id").isNull()
+).count() == 0
+
+print("Gold watermarks : 5/5 initialized")
+
+
+# ---------------------------------------------------------
+# 6. Synthetic artifact cleanup
+# ---------------------------------------------------------
+
+synthetic_tables = (
+    spark.sql("SHOW TABLES IN ops")
+    .filter(F.col("tableName").startswith("_test_"))
+    .count()
+)
+
+assert synthetic_tables == 0
+
+print(f"Synthetic tables: {synthetic_tables}")
+
+print("\nEND-TO-END ORCHESTRATION AUDIT PASSED.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
