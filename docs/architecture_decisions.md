@@ -995,3 +995,25 @@ The watermark advances only after the Gold transformation and its validation com
 Because Silver deletion semantics are not defined by ADR-009, unexpected CDF delete events cause the incremental Gold run to fail rather than silently deleting or retaining ambiguous Gold state.
 
 Existing Gold tables provide the validated baseline, so initial watermarks are seeded at the current Silver table versions after CDF is enabled.
+
+## ADR-015 — Use revision-aware Real-Time event identity and history semantics
+
+Status: Accepted
+
+GridPulse publishes SRC-005 Real-Time price events at the native business grain:
+
+`delivery_date + delivery_hour + interval`
+
+Business identity is separated from source revision identity and interval observation identity.
+
+The exact source payload SHA-256 remains the authoritative payload-level lineage identifier. A separate deterministic observation hash identifies whether the semantic state of an individual interval changed. This prevents unchanged intervals from being republished merely because another portion of the mutable XML payload changed.
+
+Published event IDs are deterministic for a given business key and source revision so that publisher or transport retries reproduce the same logical event identity.
+
+Fully populated intervals are eligible for market-price observation events. Fully empty or partially populated intervals are not published as market-price observations. If a previously published eligible interval later becomes ineligible through a legitimate source revision, GridPulse publishes an explicit invalidation event rather than silently retaining stale current state.
+
+Eventhouse retains event history, including legitimate revisions and invalidations. Current eligible Real-Time state is derived through KQL rather than initially maintained as a separate physical table.
+
+The raw source `CreatedAt` value is preserved without timezone inference.
+
+Eventhouse is an analytical Real-Time serving layer and does not replace immutable Bronze source evidence, Silver trusted current state, or source revision lineage.

@@ -217,7 +217,7 @@ Silver datasets include common lineage metadata where applicable.
 | `_source_url` | string | Yes | Original source URL |
 | `_source_hash` | string | No | SHA-256 hash of the raw source payload |
 | `_source_version` | string | Yes | Explicit source revision/version when available |
-| `_source_created_at` | timestamp | Yes | Timestamp provided by the source report |
+| `_source_created_at` | string | Yes | Raw source report CreatedAt preserved without timezone inference |
 | `_ingestion_timestamp` | timestamp | No | UTC timestamp when GridPulse ingested the payload |
 | `_run_id` | string | No | GridPulse processing-run identifier |
 
@@ -1697,6 +1697,69 @@ PUB_RealtimeOntarioZonalPrice
 __retrieved_YYYYMMDDTHHMMSSZ
 __sha256_<hash>.xml
 ```
+
+## 10.9 Phase 4 Real-Time Event Contract v1
+
+### Event Grain
+
+Each published Real-Time event represents one SRC-005 five-minute interval:
+
+`delivery_date + delivery_hour + interval`
+
+This is the event business identity.
+
+### Event Types
+
+GridPulse defines two event types:
+
+* `RT_PRICE_OBSERVATION`
+* `RT_PRICE_INVALIDATION`
+
+A fully populated interval is eligible for `RT_PRICE_OBSERVATION`.
+
+A fully empty interval that has never previously produced an eligible event is preserved in the source evidence but is not published as a market-price event.
+
+A partially populated interval is preserved, produces a warning condition, and is not published as a market-price observation under contract version 1.
+
+If a previously published eligible interval later becomes fully empty or partially populated in a legitimate source revision, GridPulse emits `RT_PRICE_INVALIDATION` so that real-time current-state serving does not retain a stale price observation.
+
+These publication rules are GridPulse operational decisions and are not asserted as IESO contractual rules.
+
+### Event Identity and Revision Detection
+
+GridPulse distinguishes three identities:
+
+`business identity`
+= `delivery_date + delivery_hour + interval`
+
+`source revision identity`
+= business identity + raw source `CreatedAt` + exact payload SHA-256
+
+`observation identity`
+= deterministic hash of the interval's business key, price components, and source flag
+
+The exact XML payload SHA-256 is retained in every event as source lineage.
+
+The observation hash does not include payload-level or publisher-level metadata. This prevents unchanged intervals from being republished solely because another part of the mutable XML document changed.
+
+The event ID is deterministic for a given published source revision so that retries reproduce the same logical event identity.
+
+### Source CreatedAt
+
+The source `CreatedAt` value is preserved as a raw string.
+
+GridPulse does not infer its timezone and does not convert it into a canonical market timestamp until authoritative temporal semantics are established.
+
+### Eventhouse Semantics
+
+Eventhouse retains published Real-Time event history, including legitimate revisions and invalidations.
+
+Current eligible state is derived through KQL rather than maintained initially as a separate physical current-state table.
+
+Eventhouse complements, but does not replace, immutable Bronze evidence or trusted Silver current state.
+
+Every published event must retain sufficient lineage to resolve back to the exact Bronze source payload that produced it.
+
 
 ---
 
