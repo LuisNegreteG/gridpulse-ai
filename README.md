@@ -715,14 +715,19 @@ Fabric-managed workspace definitions will later be stored separately from manual
 
 Current Gold layer:
 
-- 5 source-aligned Delta facts
+- five source-aligned Gold Delta facts
+- lightweight SQL serving views
+- reusable Gold contracts and DQ
+- independent Gold execution tracking
+- persistent DQ evidence
 - idempotent MERGE processing
-- upstream lineage preservation
-- Gold execution tracking
-- persistent Gold DQ results
-- revision-propagation and failure-path tests
-- trusted cross-source coverage validation
-- 2 lightweight SQL serving views
+- Delta Change Data Feed incremental processing
+- version-based processing watermarks
+- revision-propagation testing
+- failure-path testing
+- trusted coverage/intersection validation
+- Fabric Data Factory orchestration
+- end-to-end Bronze → Silver → Gold validation
 
 ---
 
