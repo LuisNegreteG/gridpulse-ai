@@ -2566,3 +2566,71 @@ print("Synthetic test artifacts: 0")
 # META   "language": "python",
 # META   "language_group": "synapse_pyspark"
 # META }
+
+# CELL ********************
+
+import inspect
+import importlib
+
+import builtin.gridpulse.silver as silver
+import builtin.gridpulse.dq as dq
+
+importlib.invalidate_caches()
+silver = importlib.reload(silver)
+dq = importlib.reload(dq)
+
+print("=== SILVER PUBLIC API ===")
+
+for name, obj in inspect.getmembers(silver):
+    if inspect.isfunction(obj) and not name.startswith("_"):
+        print(name, inspect.signature(obj))
+
+print("\n=== DQ PUBLIC API ===")
+
+for name, obj in inspect.getmembers(dq):
+    if inspect.isfunction(obj) and not name.startswith("_"):
+        print(name, inspect.signature(obj))
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import inspect
+import importlib
+
+from builtin.gridpulse.parsers import (
+    demand,
+    demand_zonal,
+    generation,
+    price_day_ahead,
+    price_realtime,
+)
+
+modules = {
+    "demand": demand,
+    "demand_zonal": demand_zonal,
+    "generation": generation,
+    "price_day_ahead": price_day_ahead,
+    "price_realtime": price_realtime,
+}
+
+for module_name, module in modules.items():
+    module = importlib.reload(module)
+
+    print(f"\n=== {module_name.upper()} PUBLIC API ===")
+
+    for name, obj in inspect.getmembers(module):
+        if inspect.isfunction(obj) and not name.startswith("_"):
+            print(name, inspect.signature(obj))
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }

@@ -907,3 +907,91 @@ Historical source revisions remain preserved in Bronze.
 The available source contracts do not establish that absence from a later payload represents an authoritative deletion.
 
 This approach preserves raw history while keeping Silver suitable for current-state analytics and prevents unsupported delete semantics.
+
+## ADR-010 — Preserve source-aligned analytical facts in Gold
+
+**Status:** Accepted
+
+Gold facts preserve the validated analytical grain and independent lineage of each trusted Silver dataset.
+
+Initial Gold facts are:
+
+- `gold.fact_market_demand_hourly`
+- `gold.fact_zonal_demand_hourly`
+- `gold.fact_generation_hourly`
+- `gold.fact_day_ahead_price_hourly`
+- `gold.fact_realtime_price_5min`
+
+Cross-source datasets are not materialized unless their grain alignment, business semantics, and trusted coverage intersection are explicitly defined and validated.
+
+This prevents silent grain multiplication, manufactured observations, ambiguous lineage, and coupling between sources with different revision and coverage histories.
+
+Natural business keys are retained. Surrogate keys and dimensions are deferred until a concrete serving requirement justifies them.
+
+## ADR-011 — Use lightweight serving views before derived Gold materialization
+
+**Status:** Accepted
+
+The five source-aligned Gold facts remain the physical analytical serving layer.
+
+Additional cross-source or derived Gold tables are not materialized unless repeated analytical use, performance requirements, or validated business semantics justify physical persistence.
+
+Reusable analytical logic may first be exposed through read-only serving views over Gold facts.
+
+This avoids premature duplication, preserves native grain, and keeps cross-source alignment explicit.
+
+## ADR-012 — Extend ETL run tracking to downstream pipeline executions
+
+**Status:** Accepted
+
+`ops.etl_run` is extended from Bronze ingestion tracking to general GridPulse ETL pipeline execution tracking.
+
+Bronze ingestion runs continue using:
+
+- `pipeline_name = bronze_ingestion`
+- one execution per source acquisition attempt
+
+Gold transformations create independent execution IDs using UUID4 and use:
+
+- `pipeline_name = gold_transform`
+- one execution per source-aligned Gold dataset transformation
+
+Gold DQ results reference the Gold transformation run ID rather than reusing an upstream Bronze/Silver `_run_id`.
+
+Upstream source lineage remains preserved separately in Gold row-level lineage columns.
+
+This keeps execution lineage distinct from source payload lineage and prevents dataset-level Gold DQ results from being associated with an arbitrary historical ingestion run.
+
+## ADR-013 — Defer the Power BI semantic model until analytical consumption requirements are finalized
+
+**Status:** Accepted
+
+GridPulse does not create a Power BI semantic model during the initial Gold engineering phase.
+
+The current analytical serving layer consists of five source-aligned Gold Delta facts and lightweight SQL serving views.
+
+A semantic model would currently require premature decisions about cross-fact relationships, conformed dimensions, keys, and analytical measures while several cross-source business questions still have incomplete coverage or undefined semantics.
+
+When interactive BI consumption is implemented, the preferred starting architecture is a purpose-built Direct Lake on OneLake semantic model over physical Gold Delta tables.
+
+SQL serving views remain available for SQL consumers and reusable analytical logic but are not required to become semantic-model sources.
+
+Dimensions, additional keys, and relationships will be introduced only when concrete semantic-model requirements justify them.
+
+## ADR-014 — Use Delta Change Data Feed and version watermarks for Gold incremental processing
+
+**Status:** Accepted
+
+Gold incremental processing uses Delta Change Data Feed (CDF) on trusted Silver tables.
+
+Each Gold dataset tracks the last successfully processed Silver Delta version.
+
+A Gold run reads only Silver changes after the stored watermark and up to a fixed ending version captured for that execution.
+
+Changed business keys are resolved back against the current trusted Silver state before Gold MERGE.
+
+The watermark advances only after the Gold transformation and its validation complete successfully.
+
+Because Silver deletion semantics are not defined by ADR-009, unexpected CDF delete events cause the incremental Gold run to fail rather than silently deleting or retaining ambiguous Gold state.
+
+Existing Gold tables provide the validated baseline, so initial watermarks are seeded at the current Silver table versions after CDF is enabled.
