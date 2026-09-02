@@ -1,0 +1,53 @@
+{
+  "sources": [
+    {
+      "id": "fc6778ea-eaa5-4d83-b041-9c871e23f766",
+      "name": "src_gridpulse_rt_publisher",
+      "type": "CustomEndpoint",
+      "properties": {}
+    }
+  ],
+  "destinations": [
+    {
+      "id": "5d1163d9-02d3-4934-ba78-e7c5344723bf",
+      "name": "Eventhouse",
+      "type": "Eventhouse",
+      "properties": {
+        "dataIngestionMode": "DirectIngestion",
+        "workspaceId": "00000000-0000-0000-0000-000000000000",
+        "itemId": "ea9fcc46-6f10-8101-441e-2b9c05fdd54a",
+        "tableName": "rt_price_event_history",
+        "connectionName": "es_gridpulse_realtime_gl7s4u",
+        "mappingRuleName": "rt_price_event_history_mapping"
+      },
+      "inputNodes": [
+        {
+          "name": "es_gridpulse_realtime-stream"
+        }
+      ],
+      "inputSchemas": [
+        {
+          "name": "es_gridpulse_realtime-stream",
+          "schema": {
+            "columns": []
+          }
+        }
+      ]
+    }
+  ],
+  "streams": [
+    {
+      "id": "f64427c2-5041-466f-b3db-176504b97916",
+      "name": "es_gridpulse_realtime-stream",
+      "type": "DefaultStream",
+      "properties": {},
+      "inputNodes": [
+        {
+          "name": "src_gridpulse_rt_publisher"
+        }
+      ]
+    }
+  ],
+  "operators": [],
+  "compatibilityLevel": "1.1"
+}

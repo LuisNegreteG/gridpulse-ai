@@ -1,0 +1,28 @@
+{
+  "queryset": {
+    "version": "1.0.0",
+    "dataSources": [
+      {
+        "id": "5ac38870-44ba-4ab9-b6e5-4483bec10faf",
+        "clusterUri": "",
+        "type": "Fabric",
+        "databaseItemId": "ea9fcc46-6f10-8101-441e-2b9c05fdd54a"
+      }
+    ],
+    "tabs": [
+      {
+        "id": "c74699df-198c-45dd-be58-0e33afa82cb9",
+        "content": ".show table rt_price_event_history cslschema\n\nrt_price_event_history\n| count",
+        "title": "Tab",
+        "dataSourceId": "5ac38870-44ba-4ab9-b6e5-4483bec10faf"
+      },
+      {
+        "id": "e12c51a2-b02f-4e74-8fba-eff136914b6b",
+        "content": ".create-or-alter table rt_price_event_history ingestion json mapping \"rt_price_event_history_json_v1\"\n'['\n'{\"column\":\"event_schema_version\",\"Properties\":{\"Path\":\"$.event_schema_version\"}},'\n'{\"column\":\"event_type\",\"Properties\":{\"Path\":\"$.event_type\"}},'\n'{\"column\":\"event_id\",\"Properties\":{\"Path\":\"$.event_id\"}},'\n'{\"column\":\"observation_hash\",\"Properties\":{\"Path\":\"$.observation_hash\"}},'\n'{\"column\":\"delivery_date\",\"Properties\":{\"Path\":\"$.delivery_date\"}},'\n'{\"column\":\"delivery_hour\",\"Properties\":{\"Path\":\"$.delivery_hour\"}},'\n'{\"column\":\"interval\",\"Properties\":{\"Path\":\"$.interval\"}},'\n'{\"column\":\"zonal_price_capped_cad_per_mwh\",\"Properties\":{\"Path\":\"$.zonal_price_capped_cad_per_mwh\"}},'\n'{\"column\":\"loss_price_capped_cad_per_mwh\",\"Properties\":{\"Path\":\"$.loss_price_capped_cad_per_mwh\"}},'\n'{\"column\":\"congestion_price_capped_cad_per_mwh\",\"Properties\":{\"Path\":\"$.congestion_price_capped_cad_per_mwh\"}},'\n'{\"column\":\"source_flag\",\"Properties\":{\"Path\":\"$.source_flag\"}},'\n'{\"column\":\"publication_state\",\"Properties\":{\"Path\":\"$.publication_state\"}},'\n'{\"column\":\"previous_event_id\",\"Properties\":{\"Path\":\"$.previous_event_id\"}},'\n'{\"column\":\"source_name\",\"Properties\":{\"Path\":\"$.source_name\"}},'\n'{\"column\":\"source_file\",\"Properties\":{\"Path\":\"$.source_file\"}},'\n'{\"column\":\"source_url\",\"Properties\":{\"Path\":\"$.source_url\"}},'\n'{\"column\":\"source_hash\",\"Properties\":{\"Path\":\"$.source_hash\"}},'\n'{\"column\":\"source_created_at_raw\",\"Properties\":{\"Path\":\"$.source_created_at_raw\"}},'\n'{\"column\":\"source_doc_revision\",\"Properties\":{\"Path\":\"$.source_doc_revision\"}},'\n'{\"column\":\"bronze_first_seen_at_utc\",\"Properties\":{\"Path\":\"$.bronze_first_seen_at_utc\"}},'\n'{\"column\":\"publisher_run_id\",\"Properties\":{\"Path\":\"$.publisher_run_id\"}},'\n'{\"column\":\"poll_id\",\"Properties\":{\"Path\":\"$.poll_id\"}},'\n'{\"column\":\"event_created_at_utc\",\"Properties\":{\"Path\":\"$.event_created_at_utc\"}}'\n']'\n\n\nrt_price_event_history\n| count",
+        "title": "",
+        "dataSourceId": "5ac38870-44ba-4ab9-b6e5-4483bec10faf"
+      }
+    ],
+    "querysetType": "Standalone"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Eventstream",
+    "displayName": "es_gridpulse_realtime"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "7b94bc75-258e-893d-43f1-d2da688f00d4"
+  }
+}

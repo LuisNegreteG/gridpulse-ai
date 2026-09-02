@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "KQLQueryset",
+    "displayName": "Tables_Creation",
+    "description": "Tables_Creation"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "8cb01e7c-a274-acf5-4a0b-339994790a8e"
+  }
+}
