@@ -9,7 +9,7 @@
   ],
   "destinations": [
     {
-      "id": "5d1163d9-02d3-4934-ba78-e7c5344723bf",
+      "id": "60b9b083-8690-4b56-b23f-562eec0c31a3",
       "name": "Eventhouse",
       "type": "Eventhouse",
       "properties": {
@@ -17,8 +17,8 @@
         "workspaceId": "00000000-0000-0000-0000-000000000000",
         "itemId": "ea9fcc46-6f10-8101-441e-2b9c05fdd54a",
         "tableName": "rt_price_event_history",
-        "connectionName": "es_gridpulse_realtime_gl7s4u",
-        "mappingRuleName": "rt_price_event_history_mapping"
+        "connectionName": "es_gridpulse_realtime_m62v62",
+        "mappingRuleName": "rt_price_event_history_json_v1"
       },
       "inputNodes": [
         {
