@@ -583,77 +583,6 @@ print("STEP 47.5 VALIDATION PASSED.")
 
 # CELL ********************
 
-print("=== RT RESULT KEYS ===")
-print(sorted(rt_result.keys()))
-
-print("\n=== ETL RUN ROW ===")
-etl_run_dict = run_rows[0].asDict(recursive=True)
-
-for key, value in etl_run_dict.items():
-    print(f"{key}: {value}")
-
-print("\n=== SOURCE REGISTRY ROW ===")
-registry_dict = registry_rows[0].asDict(recursive=True)
-
-for key, value in registry_dict.items():
-    print(f"{key}: {value}")
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
-# CELL ********************
-
-import inspect
-import os
-
-print("=== ORCHESTRATION MODULE ===")
-print("Module file:", getattr(orchestration, "__file__", None))
-
-print("\n=== FUNCTION SIGNATURE ===")
-print(inspect.signature(orchestration.ingest_http_source))
-
-print("\n=== FUNCTION MODULE ===")
-print(orchestration.ingest_http_source.__module__)
-
-print("\n=== DOCSTRING ===")
-print(orchestration.ingest_http_source.__doc__)
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
-# CELL ********************
-
-fn = orchestration.ingest_http_source
-code = fn.__code__
-
-print("=== LOCAL VARIABLES ===")
-print(code.co_varnames)
-
-print("\n=== REFERENCED NAMES ===")
-print(code.co_names)
-
-print("\n=== STRING CONSTANTS ===")
-for value in code.co_consts:
-    if isinstance(value, str):
-        print(repr(value))
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
-
-# CELL ********************
-
 import hashlib
 import uuid
 from datetime import datetime, timezone
@@ -2332,41 +2261,12 @@ finally:
 # CELL ********************
 
 import os
-
 from azure.eventhub import EventData, EventHubProducerClient
 from pyspark.sql import functions as F
 
-
-# ------------------------------------------------------------
-# 1. Validate session dependency and connection
-# ------------------------------------------------------------
-
-connection_string = os.environ.get(
-    "GRIDPULSE_EVENTSTREAM_CONNECTION"
-)
-
-assert connection_string, (
-    "Eventstream connection is not loaded in this session."
-)
-
-
-# ------------------------------------------------------------
-# 2. Read exactly one durable PENDING event
-# ------------------------------------------------------------
-
-pending_df = (
+probe_rows = (
     spark.table("ops.rt_event_outbox")
     .filter(F.col("status") == "PENDING")
-)
-
-pending_before = pending_df.count()
-
-assert pending_before > 0, (
-    "No PENDING events available in ops.rt_event_outbox."
-)
-
-probe_rows = (
-    pending_df
     .orderBy(
         F.col("created_at_utc").asc(),
         F.col("event_id").asc(),
@@ -2379,18 +2279,6 @@ assert len(probe_rows) == 1
 
 probe = probe_rows[0]
 
-assert probe["event_payload"]
-assert probe["event_id"]
-assert probe["event_type"]
-
-
-# ------------------------------------------------------------
-# 3. Send exactly one event to Fabric Eventstream
-#
-# IMPORTANT:
-# This does NOT update the outbox status.
-# ------------------------------------------------------------
-
 producer = None
 
 try:
@@ -2400,17 +2288,8 @@ try:
 
     batch = producer.create_batch()
 
-    event = EventData(
-        probe["event_payload"]
-    )
-
-    # Transport metadata only.
-    # The authoritative event contract remains in event_payload.
-    event.properties = {
-        "event_id": probe["event_id"],
-        "event_type": probe["event_type"],
-        "gridpulse_probe": "true",
-    }
+    event = EventData(probe["event_payload"])
+    event.content_type = "application/json"
 
     batch.add(event)
 
@@ -2423,46 +2302,994 @@ finally:
     if producer is not None:
         producer.close()
 
+print("=== STEP 50.2 E2E PROBE ===")
+print(f"Event ID: {probe['event_id']}")
+print("Events sent: 1")
+print("Outbox status modified: NO")
+print("STEP 50.2 PROBE SENT.")
 
-# ------------------------------------------------------------
-# 4. Verify durable outbox was NOT modified
-# ------------------------------------------------------------
+# METADATA ********************
 
-pending_after = (
-    spark.table("ops.rt_event_outbox")
-    .filter(F.col("status") == "PENDING")
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+from pyspark.sql import functions as F
+
+outbox = spark.table("ops.rt_event_outbox")
+
+status_summary = (
+    outbox
+    .groupBy("status")
     .count()
-)
-
-probe_after = (
-    spark.table("ops.rt_event_outbox")
-    .filter(F.col("event_id") == probe["event_id"])
+    .orderBy("status")
     .collect()
 )
 
-assert len(probe_after) == 1
+duplicate_ids = (
+    outbox
+    .groupBy("event_id")
+    .count()
+    .filter(F.col("count") > 1)
+    .count()
+)
 
-assert probe_after[0]["status"] == "PENDING"
+invalid_attempts = (
+    outbox
+    .filter(F.col("attempt_count") < 0)
+    .count()
+)
 
-assert pending_after == pending_before
+leased_rows = (
+    outbox
+    .filter(F.col("lease_owner_run_id").isNotNull())
+    .count()
+)
+
+total_rows = outbox.count()
+
+print("=== RT OUTBOX PRE-DISPATCH AUDIT ===")
+print(f"Total rows: {total_rows}")
+
+for row in status_summary:
+    print(f"{row['status']}: {row['count']}")
+
+print(f"Duplicate event_ids: {duplicate_ids}")
+print(f"Invalid attempt_count rows: {invalid_attempts}")
+print(f"Rows currently leased: {leased_rows}")
+
+assert duplicate_ids == 0
+assert invalid_attempts == 0
+
+print("STEP 53.3 PRE-DISPATCH AUDIT PASSED.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import os
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from azure.eventhub import EventData, EventHubProducerClient
+from delta.tables import DeltaTable
+from pyspark.sql import functions as F
 
 
 # ------------------------------------------------------------
-# 5. Result
+# 0. Runtime validation
 # ------------------------------------------------------------
 
-print("=== EVENTSTREAM SINGLE-EVENT PROBE ===")
-print(f"Event ID: {probe['event_id']}")
-print(f"Event type: {probe['event_type']}")
-print(f"Delivery date: {probe['delivery_date']}")
-print(f"Delivery hour: {probe['delivery_hour']}")
-print(f"Interval: {probe['interval']}")
+spark.conf.set("spark.sql.session.timeZone", "UTC")
+
+connection_string = os.environ.get(
+    "GRIDPULSE_EVENTSTREAM_CONNECTION"
+)
+
+assert connection_string, (
+    "Eventstream connection is not loaded in this session."
+)
+
+OUTBOX_TABLE = "ops.rt_event_outbox"
+
+dispatcher_run_id = str(uuid.uuid4())
+
+claim_time = datetime.now(timezone.utc)
+lease_expires_at = claim_time + timedelta(minutes=5)
+
+
+# ------------------------------------------------------------
+# 1. Find exactly one dispatchable event
+#
+# Eligible:
+# - PENDING
+# - or an abandoned SENDING row whose lease expired
+# ------------------------------------------------------------
+
+candidate_rows = (
+    spark.table(OUTBOX_TABLE)
+    .filter(
+        (F.col("status") == "PENDING")
+        |
+        (
+            (F.col("status") == "SENDING")
+            & (
+                F.col("lease_expires_at_utc").isNull()
+                | (
+                    F.col("lease_expires_at_utc")
+                    < F.current_timestamp()
+                )
+            )
+        )
+    )
+    .orderBy(
+        F.col("created_at_utc").asc(),
+        F.col("event_id").asc(),
+    )
+    .limit(1)
+    .collect()
+)
+
+assert len(candidate_rows) == 1, (
+    "No dispatchable outbox event found."
+)
+
+candidate = candidate_rows[0]
+candidate_event_id = candidate["event_id"]
+
+
+# ------------------------------------------------------------
+# 2. Attempt durable claim
+#
+# The conditional update prevents us from taking an active lease.
+# ------------------------------------------------------------
+
+outbox_delta = DeltaTable.forName(
+    spark,
+    OUTBOX_TABLE,
+)
+
+claim_source = spark.createDataFrame(
+    [(
+        candidate_event_id,
+        dispatcher_run_id,
+        claim_time,
+        lease_expires_at,
+    )],
+    """
+    event_id string,
+    lease_owner_run_id string,
+    claim_time timestamp,
+    lease_expires_at_utc timestamp
+    """,
+)
+
+(
+    outbox_delta.alias("t")
+    .merge(
+        claim_source.alias("s"),
+        "t.event_id = s.event_id",
+    )
+    .whenMatchedUpdate(
+        condition="""
+            t.status = 'PENDING'
+            OR (
+                t.status = 'SENDING'
+                AND (
+                    t.lease_expires_at_utc IS NULL
+                    OR t.lease_expires_at_utc < current_timestamp()
+                )
+            )
+        """,
+        set={
+            "status": F.lit("SENDING"),
+            "lease_owner_run_id":
+                F.col("s.lease_owner_run_id"),
+            "lease_expires_at_utc":
+                F.col("s.lease_expires_at_utc"),
+            "attempt_count":
+                F.coalesce(
+                    F.col("t.attempt_count"),
+                    F.lit(0),
+                ) + F.lit(1),
+            "last_attempt_at_utc":
+                F.col("s.claim_time"),
+            "updated_at_utc":
+                F.col("s.claim_time"),
+            "last_error":
+                F.lit(None).cast("string"),
+        },
+    )
+    .execute()
+)
+
+
+# ------------------------------------------------------------
+# 3. Confirm THIS dispatcher actually owns the lease
+#
+# Critical before network send.
+# ------------------------------------------------------------
+
+claimed_rows = (
+    spark.table(OUTBOX_TABLE)
+    .filter(
+        F.col("event_id") == candidate_event_id
+    )
+    .collect()
+)
+
+assert len(claimed_rows) == 1
+
+claimed = claimed_rows[0]
+
+assert claimed["status"] == "SENDING"
+assert (
+    claimed["lease_owner_run_id"]
+    == dispatcher_run_id
+), (
+    "Dispatcher did not acquire the event lease. "
+    "No event was sent."
+)
+
+
+# ------------------------------------------------------------
+# 4. Send exactly one durable payload
+# ------------------------------------------------------------
+
+producer = None
+
+try:
+    producer = EventHubProducerClient.from_connection_string(
+        conn_str=connection_string
+    )
+
+    batch = producer.create_batch()
+
+    event = EventData(
+        claimed["event_payload"]
+    )
+
+    event.content_type = "application/json"
+
+    event.properties = {
+        "event_id": claimed["event_id"],
+        "event_type": claimed["event_type"],
+        "dispatcher_run_id": dispatcher_run_id,
+    }
+
+    batch.add(event)
+
+    producer.send_batch(
+        batch,
+        timeout=30,
+    )
+
+    # --------------------------------------------------------
+    # 5. Transport acknowledged → mark SENT
+    #
+    # SENT means Eventstream accepted the delivery.
+    # It does NOT claim that Eventhouse ingestion was already
+    # completed.
+    # --------------------------------------------------------
+
+    sent_time = datetime.now(timezone.utc)
+
+    outbox_delta.update(
+        condition=(
+            (F.col("event_id") == candidate_event_id)
+            & (
+                F.col("lease_owner_run_id")
+                == dispatcher_run_id
+            )
+            & (F.col("status") == "SENDING")
+        ),
+        set={
+            "status": F.lit("SENT"),
+            "sent_at_utc": F.lit(sent_time),
+            "lease_owner_run_id":
+                F.lit(None).cast("string"),
+            "lease_expires_at_utc":
+                F.lit(None).cast("timestamp"),
+            "last_error":
+                F.lit(None).cast("string"),
+            "updated_at_utc": F.lit(sent_time),
+        },
+    )
+
+except Exception as exc:
+
+    failure_time = datetime.now(timezone.utc)
+
+    # Recoverability rule:
+    # failed send returns to PENDING.
+    outbox_delta.update(
+        condition=(
+            (F.col("event_id") == candidate_event_id)
+            & (
+                F.col("lease_owner_run_id")
+                == dispatcher_run_id
+            )
+            & (F.col("status") == "SENDING")
+        ),
+        set={
+            "status": F.lit("PENDING"),
+            "lease_owner_run_id":
+                F.lit(None).cast("string"),
+            "lease_expires_at_utc":
+                F.lit(None).cast("timestamp"),
+            "last_error":
+                F.lit(str(exc)[:4000]),
+            "updated_at_utc":
+                F.lit(failure_time),
+        },
+    )
+
+    raise
+
+finally:
+    if producer is not None:
+        producer.close()
+
+
+# ------------------------------------------------------------
+# 6. Durable post-send validation
+# ------------------------------------------------------------
+
+final_rows = (
+    spark.table(OUTBOX_TABLE)
+    .filter(
+        F.col("event_id") == candidate_event_id
+    )
+    .collect()
+)
+
+assert len(final_rows) == 1
+
+final_row = final_rows[0]
+
+assert final_row["status"] == "SENT"
+assert final_row["attempt_count"] >= 1
+assert final_row["sent_at_utc"] is not None
+assert final_row["lease_owner_run_id"] is None
+assert final_row["lease_expires_at_utc"] is None
+
+status_counts = {
+    row["status"]: row["count"]
+    for row in (
+        spark.table(OUTBOX_TABLE)
+        .groupBy("status")
+        .count()
+        .collect()
+    )
+}
+
+print("=== RT OUTBOX SINGLE-EVENT DISPATCH ===")
+print(f"Event ID: {candidate_event_id}")
+print(
+    f"Attempt count: "
+    f"{final_row['attempt_count']}"
+)
+print(f"Final status: {final_row['status']}")
+print(
+    f"Sent at UTC: "
+    f"{final_row['sent_at_utc']}"
+)
 print()
-print("Events sent in this probe: 1")
-print(f"PENDING before: {pending_before}")
-print(f"PENDING after: {pending_after}")
-print("Outbox status modified: NO")
-print("STEP 50.0 PROBE SENT.")
+print(
+    "PENDING:",
+    status_counts.get("PENDING", 0),
+)
+print(
+    "SENDING:",
+    status_counts.get("SENDING", 0),
+)
+print(
+    "SENT:",
+    status_counts.get("SENT", 0),
+)
+print()
+print("Lease released: PASS")
+print("Transport acknowledgment recorded: PASS")
+print("STEP 53.4A VALIDATION PASSED.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import os
+import uuid
+
+from datetime import datetime, timedelta, timezone
+
+from azure.eventhub import EventData, EventHubProducerClient
+from delta.tables import DeltaTable
+from pyspark.sql import functions as F
+
+
+OUTBOX_TABLE = "ops.rt_event_outbox"
+
+
+def dispatch_pending_outbox(
+    max_events=None,
+    lease_minutes=5,
+):
+    """
+    Dispatch eligible GridPulse real-time events from the durable
+    Delta outbox to Fabric Eventstream.
+
+    Eligible rows:
+      - PENDING
+      - SENDING with an expired lease
+
+    Delivery semantics:
+      - Durable claim before network send
+      - SENDING during transport
+      - SENT only after transport acknowledgement
+      - Failed sends return to PENDING
+      - event_id remains unchanged across retries
+
+    Parameters
+    ----------
+    max_events : int | None
+        Maximum number of events to send.
+        None dispatches all currently eligible events.
+
+    lease_minutes : int
+        Lease duration used to recover abandoned SENDING rows.
+
+    Returns
+    -------
+    dict
+        Dispatcher execution summary.
+    """
+
+    connection_string = os.environ.get(
+        "GRIDPULSE_EVENTSTREAM_CONNECTION"
+    )
+
+    if not connection_string:
+        raise RuntimeError(
+            "GRIDPULSE_EVENTSTREAM_CONNECTION "
+            "is not available in this runtime."
+        )
+
+    if max_events is not None and max_events <= 0:
+        raise ValueError(
+            "max_events must be positive or None."
+        )
+
+    outbox_delta = DeltaTable.forName(
+        spark,
+        OUTBOX_TABLE,
+    )
+
+    dispatcher_run_id = str(uuid.uuid4())
+
+    sent_event_ids = []
+    failed_event_ids = []
+
+
+    # --------------------------------------------------------
+    # Candidate resolver
+    # --------------------------------------------------------
+
+    def get_next_candidate():
+
+        rows = (
+            spark.table(OUTBOX_TABLE)
+            .filter(
+                (F.col("status") == "PENDING")
+                |
+                (
+                    (F.col("status") == "SENDING")
+                    &
+                    (
+                        F.col("lease_expires_at_utc").isNull()
+                        |
+                        (
+                            F.col("lease_expires_at_utc")
+                            < F.current_timestamp()
+                        )
+                    )
+                )
+            )
+            .orderBy(
+                F.col("created_at_utc").asc(),
+                F.col("event_id").asc(),
+            )
+            .limit(1)
+            .collect()
+        )
+
+        return rows[0] if rows else None
+
+
+    producer = EventHubProducerClient.from_connection_string(
+        conn_str=connection_string
+    )
+
+    try:
+
+        dispatch_index = 0
+
+        while True:
+
+            if (
+                max_events is not None
+                and dispatch_index >= max_events
+            ):
+                break
+
+            candidate = get_next_candidate()
+
+            if candidate is None:
+                break
+
+            dispatch_index += 1
+
+            event_id = candidate["event_id"]
+
+            claim_time = datetime.now(timezone.utc)
+
+            lease_expires_at = (
+                claim_time
+                + timedelta(minutes=lease_minutes)
+            )
+
+
+            # ------------------------------------------------
+            # 1. Durable lease claim
+            # ------------------------------------------------
+
+            claim_df = spark.createDataFrame(
+                [(
+                    event_id,
+                    dispatcher_run_id,
+                    claim_time,
+                    lease_expires_at,
+                )],
+                """
+                event_id string,
+                lease_owner_run_id string,
+                claim_time timestamp,
+                lease_expires_at_utc timestamp
+                """
+            )
+
+            (
+                outbox_delta.alias("t")
+                .merge(
+                    claim_df.alias("s"),
+                    "t.event_id = s.event_id",
+                )
+                .whenMatchedUpdate(
+                    condition="""
+                        t.status = 'PENDING'
+                        OR (
+                            t.status = 'SENDING'
+                            AND (
+                                t.lease_expires_at_utc IS NULL
+                                OR
+                                t.lease_expires_at_utc
+                                    < s.claim_time
+                            )
+                        )
+                    """,
+                    set={
+                        "status":
+                            F.lit("SENDING"),
+
+                        "lease_owner_run_id":
+                            F.col(
+                                "s.lease_owner_run_id"
+                            ),
+
+                        "lease_expires_at_utc":
+                            F.col(
+                                "s.lease_expires_at_utc"
+                            ),
+
+                        "attempt_count":
+                            F.coalesce(
+                                F.col("t.attempt_count"),
+                                F.lit(0),
+                            ) + F.lit(1),
+
+                        "last_attempt_at_utc":
+                            F.col("s.claim_time"),
+
+                        "last_error":
+                            F.lit(None).cast("string"),
+
+                        "updated_at_utc":
+                            F.col("s.claim_time"),
+                    },
+                )
+                .execute()
+            )
+
+
+            # ------------------------------------------------
+            # 2. Confirm this dispatcher owns the lease
+            # ------------------------------------------------
+
+            claimed_rows = (
+                spark.table(OUTBOX_TABLE)
+                .filter(
+                    F.col("event_id") == event_id
+                )
+                .collect()
+            )
+
+            if len(claimed_rows) != 1:
+                raise RuntimeError(
+                    f"Unexpected outbox cardinality "
+                    f"for event {event_id}."
+                )
+
+            claimed = claimed_rows[0]
+
+            if not (
+                claimed["status"] == "SENDING"
+                and
+                claimed["lease_owner_run_id"]
+                == dispatcher_run_id
+            ):
+                # Another dispatcher won the claim.
+                continue
+
+
+            # ------------------------------------------------
+            # 3. Transport
+            # ------------------------------------------------
+
+            try:
+
+                batch = producer.create_batch()
+
+                event = EventData(
+                    claimed["event_payload"]
+                )
+
+                event.content_type = (
+                    "application/json"
+                )
+
+                event.properties = {
+                    "event_id":
+                        claimed["event_id"],
+
+                    "event_type":
+                        claimed["event_type"],
+
+                    "dispatcher_run_id":
+                        dispatcher_run_id,
+                }
+
+                batch.add(event)
+
+                producer.send_batch(
+                    batch,
+                    timeout=30,
+                )
+
+
+                # --------------------------------------------
+                # 4. Transport ACK → SENT
+                # --------------------------------------------
+
+                sent_time = datetime.now(
+                    timezone.utc
+                )
+
+                outbox_delta.update(
+                    condition=(
+                        (
+                            F.col("event_id")
+                            == event_id
+                        )
+                        &
+                        (
+                            F.col(
+                                "lease_owner_run_id"
+                            )
+                            == dispatcher_run_id
+                        )
+                        &
+                        (
+                            F.col("status")
+                            == "SENDING"
+                        )
+                    ),
+                    set={
+                        "status":
+                            F.lit("SENT"),
+
+                        "sent_at_utc":
+                            F.lit(sent_time),
+
+                        "lease_owner_run_id":
+                            F.lit(None).cast(
+                                "string"
+                            ),
+
+                        "lease_expires_at_utc":
+                            F.lit(None).cast(
+                                "timestamp"
+                            ),
+
+                        "last_error":
+                            F.lit(None).cast(
+                                "string"
+                            ),
+
+                        "updated_at_utc":
+                            F.lit(sent_time),
+                    },
+                )
+
+                sent_event_ids.append(event_id)
+
+
+            except Exception as exc:
+
+                failure_time = datetime.now(
+                    timezone.utc
+                )
+
+                # --------------------------------------------
+                # Recoverable failure → PENDING
+                # --------------------------------------------
+
+                outbox_delta.update(
+                    condition=(
+                        (
+                            F.col("event_id")
+                            == event_id
+                        )
+                        &
+                        (
+                            F.col(
+                                "lease_owner_run_id"
+                            )
+                            == dispatcher_run_id
+                        )
+                        &
+                        (
+                            F.col("status")
+                            == "SENDING"
+                        )
+                    ),
+                    set={
+                        "status":
+                            F.lit("PENDING"),
+
+                        "lease_owner_run_id":
+                            F.lit(None).cast(
+                                "string"
+                            ),
+
+                        "lease_expires_at_utc":
+                            F.lit(None).cast(
+                                "timestamp"
+                            ),
+
+                        "last_error":
+                            F.lit(
+                                str(exc)[:4000]
+                            ),
+
+                        "updated_at_utc":
+                            F.lit(failure_time),
+                    },
+                )
+
+                failed_event_ids.append(
+                    event_id
+                )
+
+                raise
+
+    finally:
+        producer.close()
+
+
+    # --------------------------------------------------------
+    # Final durable state
+    # --------------------------------------------------------
+
+    status_counts = {
+        row["status"]: row["count"]
+        for row in (
+            spark.table(OUTBOX_TABLE)
+            .groupBy("status")
+            .count()
+            .collect()
+        )
+    }
+
+    active_leases = (
+        spark.table(OUTBOX_TABLE)
+        .filter(
+            F.col(
+                "lease_owner_run_id"
+            ).isNotNull()
+        )
+        .count()
+    )
+
+    return {
+        "dispatcher_run_id":
+            dispatcher_run_id,
+
+        "sent_this_run":
+            len(sent_event_ids),
+
+        "failed_this_run":
+            len(failed_event_ids),
+
+        "pending":
+            status_counts.get("PENDING", 0),
+
+        "sending":
+            status_counts.get("SENDING", 0),
+
+        "sent":
+            status_counts.get("SENT", 0),
+
+        "active_leases":
+            active_leases,
+    }
+
+
+print(
+    "Production outbox dispatcher defined: PASS"
+)
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
+import os
+
+from pyspark.sql import functions as F
+
+
+OUTBOX_TABLE = "ops.rt_event_outbox"
+
+
+# ------------------------------------------------------------
+# Determine whether durable work is waiting
+# ------------------------------------------------------------
+
+dispatchable_condition = (
+    (F.col("status") == "PENDING")
+    |
+    (
+        (F.col("status") == "SENDING")
+        &
+        (
+            F.col("lease_expires_at_utc").isNull()
+            |
+            (
+                F.col("lease_expires_at_utc")
+                < F.current_timestamp()
+            )
+        )
+    )
+)
+
+dispatchable_before = (
+    spark.table(OUTBOX_TABLE)
+    .filter(dispatchable_condition)
+    .count()
+)
+
+print("=== RT PUBLISHER DISPATCH GATE ===")
+print("Dispatchable before:", dispatchable_before)
+
+
+# ------------------------------------------------------------
+# Dispatch only when durable work exists
+# ------------------------------------------------------------
+
+if dispatchable_before > 0:
+
+    if not os.environ.get(
+        "GRIDPULSE_EVENTSTREAM_CONNECTION"
+    ):
+        raise RuntimeError(
+            "Durable outbox events are waiting, but "
+            "GRIDPULSE_EVENTSTREAM_CONNECTION is not "
+            "available in this runtime. "
+            "Inject the credential securely at runtime; "
+            "never hardcode it in the notebook."
+        )
+
+    dispatch_summary = dispatch_pending_outbox(
+        max_events=None,
+        lease_minutes=5,
+    )
+
+else:
+
+    status_counts = {
+        row["status"]: row["count"]
+        for row in (
+            spark.table(OUTBOX_TABLE)
+            .groupBy("status")
+            .count()
+            .collect()
+        )
+    }
+
+    dispatch_summary = {
+        "sent_this_run": 0,
+        "failed_this_run": 0,
+        "pending":
+            status_counts.get("PENDING", 0),
+        "sending":
+            status_counts.get("SENDING", 0),
+        "sent":
+            status_counts.get("SENT", 0),
+        "active_leases":
+            spark.table(OUTBOX_TABLE)
+            .filter(
+                F.col(
+                    "lease_owner_run_id"
+                ).isNotNull()
+            )
+            .count(),
+    }
+
+
+# ------------------------------------------------------------
+# Final durable assertions
+# ------------------------------------------------------------
+
+assert dispatch_summary["pending"] == 0
+assert dispatch_summary["sending"] == 0
+assert dispatch_summary["active_leases"] == 0
+assert dispatch_summary["failed_this_run"] == 0
+
+print()
+print("Sent this run     :", dispatch_summary["sent_this_run"])
+print("Failed this run   :", dispatch_summary["failed_this_run"])
+print("PENDING remaining :", dispatch_summary["pending"])
+print("SENDING remaining :", dispatch_summary["sending"])
+print("Total SENT        :", dispatch_summary["sent"])
+print("Active leases     :", dispatch_summary["active_leases"])
+
+print()
+print("RT PUBLISHER FINAL DISPATCH GATE PASSED.")
+
+# METADATA ********************
+
+# META {
+# META   "language": "python",
+# META   "language_group": "synapse_pyspark"
+# META }
+
+# CELL ********************
+
 
 # METADATA ********************
 

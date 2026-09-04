@@ -12,7 +12,7 @@
     "tabs": [
       {
         "id": "c74699df-198c-45dd-be58-0e33afa82cb9",
-        "content": ".show table rt_price_event_history cslschema\n\nrt_price_event_history\n| count",
+        "content": "fn_rt_dq_summary()\n| order by rule_id asc",
         "title": "Tab",
         "dataSourceId": "5ac38870-44ba-4ab9-b6e5-4483bec10faf"
       },
@@ -90,6 +90,12 @@
       },
       {
         "id": "8094c98f-816d-4c46-8263-75381f9c0341",
+        "content": "fn_rt_dq_summary()\n| order by rule_id asc",
+        "title": "",
+        "dataSourceId": "5ac38870-44ba-4ab9-b6e5-4483bec10faf"
+      },
+      {
+        "id": "009057bb-a3ec-4383-971e-156d0cd988e5",
         "content": "fn_rt_dq_summary()\n| order by rule_id asc",
         "title": "",
         "dataSourceId": "5ac38870-44ba-4ab9-b6e5-4483bec10faf"
