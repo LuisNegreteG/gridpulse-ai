@@ -445,8 +445,6 @@ This allows data correctness, freshness and execution health to be evaluated ind
 
 ## Real-Time Intelligence
 
-## Real-Time Intelligence
-
 Phase 4 implements a revision-aware near-real-time processing path for the IESO Real-Time Ontario Zonal Price source.
 
 ```text
@@ -736,7 +734,7 @@ Fabric-managed workspace definitions will later be stored separately from manual
 
 - Phase 1 — Architecture & Source Discovery: Complete
 - Phase 2 — Bronze & Silver Engineering: Complete
-- Phase 3 — Gold & Serving Engineering: 
+- Phase 3 — Gold & Serving Engineering: Complete
 - Phase 4 — Real-Time Intelligence: Complete
 
 Current Gold layer:

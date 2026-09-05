@@ -1674,27 +1674,20 @@ No hard arithmetic DQ formula will be imposed until source semantics are confirm
 
 ### RT-011 — Mutable Alias Snapshot Identity
 
-Because:
+Because `PUB_RealtimeOntarioZonalPrice.xml` is a mutable source alias,
+Bronze identity cannot depend on the source filename or retrieval timestamp.
+
+GridPulse identifies each immutable Bronze revision using the SHA-256 hash
+of the exact raw payload bytes.
+
+Conceptually:
 
 ```text
-PUB_RealtimeOntarioZonalPrice.xml
-```
+same source alias + same payload SHA-256
+→ same immutable Bronze evidence
 
-
-GridPulse Bronze snapshot identity includes:
-
-```text
-retrieval timestamp
-+
-payload SHA-256
-```
-
-Example:
-
-```text
-PUB_RealtimeOntarioZonalPrice
-__retrieved_YYYYMMDDTHHMMSSZ
-__sha256_<hash>.xml
+same source alias + different payload SHA-256
+→ new immutable Bronze revision
 ```
 
 ## 10.9 Phase 4 Real-Time Event Contract v1
