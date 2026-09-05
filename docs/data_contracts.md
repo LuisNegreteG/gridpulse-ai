@@ -2,8 +2,8 @@
 
 **Project:** GridPulse AI — Ontario Real-Time Energy Intelligence & DataOps Platform  
 **Contract version:** 0.1  
-**Status:** Draft — validated through source discovery  
-**Last reviewed:** 2026-08-25  
+**Status:** Implemented — validated through Phase 4
+**Last reviewed:** 2026-09-04
 
 ---
 
@@ -1478,7 +1478,7 @@ delivery_date
 | `loss_price_capped_cad_per_mwh` | decimal | Yes | Source LossPriceCap |
 | `congestion_price_capped_cad_per_mwh` | decimal | Yes | Source CongPriceCap |
 | `source_flag` | string | Yes | Source Flag |
-| `_source_created_at` | timestamp | Yes | Source report CreatedAt |
+| `_source_created_at` | string | Yes | Raw source report CreatedAt preserved without timezone inference |
 | `_source_doc_revision` | string/integer | Yes | Source DocRevision |
 | common metadata | — | — | Remaining GridPulse lineage fields |
 
@@ -1680,7 +1680,6 @@ Because:
 PUB_RealtimeOntarioZonalPrice.xml
 ```
 
-is mutable, Bronze identity cannot depend on filename alone.
 
 GridPulse Bronze snapshot identity includes:
 
