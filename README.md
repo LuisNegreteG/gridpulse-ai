@@ -445,22 +445,39 @@ This allows data correctness, freshness and execution health to be evaluated ind
 
 ## Real-Time Intelligence
 
-The planned real-time path is:
+Phase 4 implements a revision-aware near-real-time processing path for the IESO Real-Time Ontario Zonal Price source.
 
 ```text
 IESO Real-Time Ontario Zonal Price
                 |
                 v
-        Python Publisher
+     Single-poll Python Publisher
                 |
                 v
-        Fabric Eventstream
+      Immutable Bronze Evidence
                 |
                 v
-           Eventhouse
+    Revision-Aware Event Logic
                 |
                 v
-               KQL
+    Durable Delta Outbox
+                |
+                v
+       Fabric Eventstream
+                |
+                v
+          Eventhouse
+                |
+                v
+        KQL Event History
+                |
+        +-------+-------+
+        |               |
+        v               v
+   Current State   Rolling Metrics
+        |
+        v
+   DQ / Observability
 ```
 
 The publisher will distinguish:
@@ -688,12 +705,18 @@ Fabric-managed workspace definitions will later be stored separately from manual
 
 ### Phase 4 — Real-Time Intelligence
 
-* [ ] Real-Time source publisher
-* [ ] Eventstream
-* [ ] Eventhouse
-* [ ] KQL analytics
-* [ ] Duplicate/revision handling
-* [ ] Rolling market metrics
+* [x] Revision-aware Real-Time source publisher
+* [x] Exact Bronze evidence reuse
+* [x] Durable publisher checkpoint
+* [x] Durable Delta event outbox
+* [x] Retry-safe leased dispatcher
+* [x] Fabric Eventstream
+* [x] Eventhouse event history
+* [x] KQL current-state serving
+* [x] Duplicate/revision handling
+* [x] Rolling 15/30/60-minute market metrics
+* [x] Real-Time DQ and observability
+* [x] End-to-end Real-Time validation
 
 ### Phase 5 — AI & Production Readiness
 
@@ -712,6 +735,7 @@ Fabric-managed workspace definitions will later be stored separately from manual
 - Phase 1 — Architecture & Source Discovery: Complete
 - Phase 2 — Bronze & Silver Engineering: Complete
 - Phase 3 — Gold & Serving Engineering: Complete
+- Phase 4 — Real-Time Intelligence: Complete
 
 Current Gold layer:
 
@@ -728,6 +752,20 @@ Current Gold layer:
 - trusted coverage/intersection validation
 - Fabric Data Factory orchestration
 - end-to-end Bronze → Silver → Gold validation
+
+Current Real-Time layer:
+
+- single-poll revision-aware IESO publisher
+- exact immutable Bronze lineage
+- deterministic observation and event identity
+- durable Delta outbox and completion checkpoint
+- leased retry-safe Eventstream dispatcher
+- append-oriented Eventhouse event history
+- logical event deduplication
+- KQL current-state serving
+- gap-aware rolling 15/30/60-minute market metrics
+- Real-Time DQ rules and operational observability
+- validated end-to-end source → Bronze → outbox → Eventstream → Eventhouse flow
 
 ---
 
