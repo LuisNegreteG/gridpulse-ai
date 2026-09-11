@@ -1,0 +1,28 @@
+{
+  "queryset": {
+    "version": "1.0.0",
+    "dataSources": [
+      {
+        "id": "213c41f0-c2bd-4ea3-b950-2a3e072a35c6",
+        "clusterUri": "https://trd-bwm1mgx3fpsmq71u2j.z3.kusto.fabric.microsoft.com",
+        "type": "Fabric",
+        "databaseItemId": "05fdd54a-2b9c-441e-8101-6f10ea9fcc46"
+      }
+    ],
+    "tabs": [
+      {
+        "id": "13722a41-c5d2-4177-ab2d-24fe029eca57",
+        "content": "fn_rt_price_current()\n| project\n    delivery_date,\n    delivery_hour,\n    ['interval'],\n    zonal_price_capped_cad_per_mwh,\n    loss_price_capped_cad_per_mwh,\n    congestion_price_capped_cad_per_mwh,\n    source_flag,\n    event_id,\n    source_hash,\n    event_created_at_utc",
+        "title": "Tab",
+        "dataSourceId": "213c41f0-c2bd-4ea3-b950-2a3e072a35c6"
+      },
+      {
+        "id": "b235a7b1-c3c6-46a5-b998-e0f80953d420",
+        "content": ".create-or-alter function\nwith (\n    folder = \"GridPulse/RealTime\",\n    docstring = \"Gap-aware rolling 15/30/60 minute GridPulse Real-Time price metrics over current eligible state.\"\n)\nfn_rt_price_rolling()\n{\n    let base = materialize(\n        fn_rt_price_current()\n        | extend market_day_index = datetime_diff(\n            \"day\",\n            todatetime(delivery_date),\n            datetime(1970-01-01)\n        )\n        | extend market_slot_ordinal =\n              tolong(market_day_index) * 288\n            + tolong(delivery_hour - 1) * 12\n            + tolong(['interval'] - 1)\n        | project\n            delivery_date,\n            delivery_hour,\n            interval_no = ['interval'],\n            market_slot_ordinal,\n            price = todouble(zonal_price_capped_cad_per_mwh),\n            event_id,\n            source_hash,\n            event_created_at_utc\n    );\n    let window_specs = datatable(\n        window_minutes:int,\n        expected_slots:int\n    )\n    [\n        15, 3,\n        30, 6,\n        60, 12\n    ];\n    base\n    | extend join_key = 1\n    | join kind=inner (\n        window_specs\n        | extend join_key = 1\n    ) on join_key\n    | project-away join_key, join_key1\n    | extend offset = range(0, expected_slots - 1, 1)\n    | mv-expand offset to typeof(long)\n    | extend expected_slot =\n        market_slot_ordinal - offset\n    | join kind=leftouter (\n        base\n        | project\n            expected_slot = market_slot_ordinal,\n            matched_price = price\n    ) on expected_slot\n    | summarize\n        matched_slots = countif(isnotnull(matched_price)),\n        raw_avg = avg(matched_price),\n        raw_min = min(matched_price),\n        raw_max = max(matched_price),\n        raw_stddev = stdev(matched_price)\n        by\n            delivery_date,\n            delivery_hour,\n            interval_no,\n            market_slot_ordinal,\n            window_minutes,\n            expected_slots,\n            event_id,\n            source_hash,\n            event_created_at_utc\n    | extend window_complete =\n        matched_slots == expected_slots\n    | extend\n        rolling_avg = iff(\n            window_complete,\n            raw_avg,\n            real(null)\n        ),\n        rolling_min = iff(\n            window_complete,\n            raw_min,\n            real(null)\n        ),\n        rolling_max = iff(\n            window_complete,\n            raw_max,\n            real(null)\n        ),\n        rolling_stddev = iff(\n            window_complete,\n            raw_stddev,\n            real(null)\n        )\n    | project\n        delivery_date,\n        delivery_hour,\n        interval_no,\n        window_minutes,\n        expected_slots,\n        matched_slots,\n        window_complete,\n        rolling_avg,\n        rolling_min,\n        rolling_max,\n        rolling_stddev,\n        event_id,\n        source_hash,\n        event_created_at_utc\n}",
+        "title": "",
+        "dataSourceId": "213c41f0-c2bd-4ea3-b950-2a3e072a35c6"
+      }
+    ],
+    "querysetType": "Embedded"
+  }
+}

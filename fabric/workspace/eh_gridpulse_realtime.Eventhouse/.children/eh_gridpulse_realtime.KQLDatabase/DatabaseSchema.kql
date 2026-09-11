@@ -1,0 +1,387 @@
+// KQL script
+// Use management commands in this script to configure your database items, such as tables, functions, materialized views, and more.
+
+
+.create-merge table rt_price_event_history (event_schema_version:string, event_type:string, event_id:string, observation_hash:string, delivery_date:string, delivery_hour:int, interval:int, zonal_price_capped_cad_per_mwh:decimal, loss_price_capped_cad_per_mwh:decimal, congestion_price_capped_cad_per_mwh:decimal, source_flag:string, publication_state:string, previous_event_id:string, source_name:string, source_file:string, source_url:string, source_hash:string, source_created_at_raw:string, source_doc_revision:string, bronze_first_seen_at_utc:datetime, publisher_run_id:string, poll_id:string, event_created_at_utc:datetime) 
+.create-or-alter table rt_price_event_history ingestion json mapping 'rt_price_event_history_json_v1'
+```
+[{"Properties":{"Path":"$.event_schema_version"},"column":"event_schema_version","datatype":""},{"Properties":{"Path":"$.event_type"},"column":"event_type","datatype":""},{"Properties":{"Path":"$.event_id"},"column":"event_id","datatype":""},{"Properties":{"Path":"$.observation_hash"},"column":"observation_hash","datatype":""},{"Properties":{"Path":"$.delivery_date"},"column":"delivery_date","datatype":""},{"Properties":{"Path":"$.delivery_hour"},"column":"delivery_hour","datatype":""},{"Properties":{"Path":"$.interval"},"column":"interval","datatype":""},{"Properties":{"Path":"$.zonal_price_capped_cad_per_mwh"},"column":"zonal_price_capped_cad_per_mwh","datatype":""},{"Properties":{"Path":"$.loss_price_capped_cad_per_mwh"},"column":"loss_price_capped_cad_per_mwh","datatype":""},{"Properties":{"Path":"$.congestion_price_capped_cad_per_mwh"},"column":"congestion_price_capped_cad_per_mwh","datatype":""},{"Properties":{"Path":"$.source_flag"},"column":"source_flag","datatype":""},{"Properties":{"Path":"$.publication_state"},"column":"publication_state","datatype":""},{"Properties":{"Path":"$.previous_event_id"},"column":"previous_event_id","datatype":""},{"Properties":{"Path":"$.source_name"},"column":"source_name","datatype":""},{"Properties":{"Path":"$.source_file"},"column":"source_file","datatype":""},{"Properties":{"Path":"$.source_url"},"column":"source_url","datatype":""},{"Properties":{"Path":"$.source_hash"},"column":"source_hash","datatype":""},{"Properties":{"Path":"$.source_created_at_raw"},"column":"source_created_at_raw","datatype":""},{"Properties":{"Path":"$.source_doc_revision"},"column":"source_doc_revision","datatype":""},{"Properties":{"Path":"$.bronze_first_seen_at_utc"},"column":"bronze_first_seen_at_utc","datatype":""},{"Properties":{"Path":"$.publisher_run_id"},"column":"publisher_run_id","datatype":""},{"Properties":{"Path":"$.poll_id"},"column":"poll_id","datatype":""},{"Properties":{"Path":"$.event_created_at_utc"},"column":"event_created_at_utc","datatype":""}]
+```
+.create-or-alter function with (folder = "GridPulse/RealTime", docstring = "Deduplicated GridPulse Real-Time event history by deterministic event_id, preferring the most complete physical delivery.", skipvalidation = "true") fn_rt_price_event_dedup() {
+    rt_price_event_history
+    | extend completeness_score =
+          iff(isnotempty(event_schema_version), 1, 0)
+        + iff(isnotempty(event_type), 1, 0)
+        + iff(isnotempty(event_id), 1, 0)
+        + iff(isnotempty(observation_hash), 1, 0)
+        + iff(isnotempty(delivery_date), 1, 0)
+        + iff(isnotnull(delivery_hour), 1, 0)
+        + iff(isnotnull(['interval']), 1, 0)
+        + iff(isnotnull(zonal_price_capped_cad_per_mwh), 1, 0)
+        + iff(isnotnull(loss_price_capped_cad_per_mwh), 1, 0)
+        + iff(isnotnull(congestion_price_capped_cad_per_mwh), 1, 0)
+        + iff(isnotempty(publication_state), 1, 0)
+        + iff(isnotempty(source_name), 1, 0)
+        + iff(isnotempty(source_file), 1, 0)
+        + iff(isnotempty(source_url), 1, 0)
+        + iff(isnotempty(source_hash), 1, 0)
+        + iff(isnotnull(bronze_first_seen_at_utc), 1, 0)
+        + iff(isnotempty(publisher_run_id), 1, 0)
+        + iff(isnotempty(poll_id), 1, 0)
+        + iff(isnotnull(event_created_at_utc), 1, 0)
+    | summarize arg_max(completeness_score, *) by event_id
+    | project-away completeness_score
+}
+.create-or-alter function with (folder = "GridPulse/RealTime", docstring = "Current eligible GridPulse Real-Time price state by native business key.", skipvalidation = "true") fn_rt_price_current() {
+    fn_rt_price_event_dedup()
+    | summarize arg_max(event_created_at_utc, *) by
+        delivery_date,
+        delivery_hour,
+        ['interval']
+    | where publication_state == "ELIGIBLE"
+}
+.create-or-alter function with (folder = "GridPulse/RealTime", docstring = "Gap-aware rolling 15/30/60 minute GridPulse Real-Time price metrics over current eligible state.", skipvalidation = "true") fn_rt_price_rolling() {
+    let base = materialize(
+        fn_rt_price_current()
+        | extend market_day_index = datetime_diff(
+            "day",
+            todatetime(delivery_date),
+            datetime(1970-01-01)
+        )
+        | extend market_slot_ordinal =
+              tolong(market_day_index) * 288
+            + tolong(delivery_hour - 1) * 12
+            + tolong(['interval'] - 1)
+        | project
+            delivery_date,
+            delivery_hour,
+            interval_no = ['interval'],
+            market_slot_ordinal,
+            price = todouble(zonal_price_capped_cad_per_mwh),
+            event_id,
+            source_hash,
+            event_created_at_utc
+    );
+    let window_specs = datatable(
+        window_minutes:int,
+        expected_slots:int
+    )
+    [
+        15, 3,
+        30, 6,
+        60, 12
+    ];
+    base
+    | extend join_key = 1
+    | join kind=inner (
+        window_specs
+        | extend join_key = 1
+    ) on join_key
+    | project-away join_key, join_key1
+    | extend offset = range(0, expected_slots - 1, 1)
+    | mv-expand offset to typeof(long)
+    | extend expected_slot =
+        market_slot_ordinal - offset
+    | join kind=leftouter (
+        base
+        | project
+            expected_slot = market_slot_ordinal,
+            matched_price = price
+    ) on expected_slot
+    | summarize
+        matched_slots = countif(isnotnull(matched_price)),
+        raw_avg = avg(matched_price),
+        raw_min = min(matched_price),
+        raw_max = max(matched_price),
+        raw_stddev = stdev(matched_price),
+        raw_negative_count = countif(matched_price < 0)
+        by
+            delivery_date,
+            delivery_hour,
+            interval_no,
+            market_slot_ordinal,
+            window_minutes,
+            expected_slots,
+            event_id,
+            source_hash,
+            event_created_at_utc
+    | extend window_complete =
+        matched_slots == expected_slots
+    | extend
+        rolling_avg = iff(
+            window_complete,
+            raw_avg,
+            real(null)
+        ),
+        rolling_min = iff(
+            window_complete,
+            raw_min,
+            real(null)
+        ),
+        rolling_max = iff(
+            window_complete,
+            raw_max,
+            real(null)
+        ),
+        rolling_stddev = iff(
+            window_complete,
+            raw_stddev,
+            real(null)
+        ),
+        negative_price_count = iff(
+            window_complete,
+            raw_negative_count,
+            long(null)
+        ),
+        negative_price_share = iff(
+            window_complete,
+            todouble(raw_negative_count) / todouble(expected_slots),
+            real(null)
+        )
+    | project
+        delivery_date,
+        delivery_hour,
+        interval_no,
+        window_minutes,
+        expected_slots,
+        matched_slots,
+        window_complete,
+        rolling_avg,
+        rolling_min,
+        rolling_max,
+        rolling_stddev,
+        negative_price_count,
+        negative_price_share,
+        event_id,
+        source_hash,
+        event_created_at_utc
+}
+.create-or-alter function with (folder = "GridPulse/RealTime", docstring = "Gap-aware interval-over-interval GridPulse Real-Time price change over current eligible state.", skipvalidation = "true") fn_rt_price_change() {
+    fn_rt_price_current()
+    | extend market_day_index = datetime_diff(
+        "day",
+        todatetime(delivery_date),
+        datetime(1970-01-01)
+    )
+    | extend market_slot_ordinal =
+          tolong(market_day_index) * 288
+        + tolong(delivery_hour - 1) * 12
+        + tolong(['interval'] - 1)
+    | extend price =
+        todouble(zonal_price_capped_cad_per_mwh)
+    | order by market_slot_ordinal asc
+    | serialize
+    | extend
+        previous_slot = prev(market_slot_ordinal),
+        previous_price = prev(price)
+    | extend slot_gap =
+        iff(
+            isnull(previous_slot),
+            long(null),
+            market_slot_ordinal - previous_slot
+        )
+    | extend interval_price_change =
+        iff(
+            slot_gap == 1,
+            price - previous_price,
+            real(null)
+        )
+    | extend is_negative_price =
+        price < 0
+    | project
+        delivery_date,
+        delivery_hour,
+        interval_no = ['interval'],
+        price,
+        previous_price,
+        slot_gap,
+        interval_price_change,
+        is_negative_price,
+        event_id,
+        source_hash,
+        event_created_at_utc
+}
+.create-or-alter function with (folder = "GridPulse/RealTime", docstring = "Consolidated GridPulse Real-Time price serving metrics.", skipvalidation = "true") fn_rt_price_market_metrics() {
+    let r15 =
+        fn_rt_price_rolling()
+        | where window_minutes == 15
+        | project
+            delivery_date,
+            delivery_hour,
+            interval_no,
+            rolling_15_complete = window_complete,
+            rolling_15_avg = rolling_avg,
+            rolling_15_min = rolling_min,
+            rolling_15_max = rolling_max,
+            rolling_15_stddev = rolling_stddev,
+            negative_15_count = negative_price_count,
+            negative_15_share = negative_price_share;
+    let r30 =
+        fn_rt_price_rolling()
+        | where window_minutes == 30
+        | project
+            delivery_date,
+            delivery_hour,
+            interval_no,
+            rolling_30_complete = window_complete,
+            rolling_30_avg = rolling_avg,
+            rolling_30_min = rolling_min,
+            rolling_30_max = rolling_max,
+            rolling_30_stddev = rolling_stddev,
+            negative_30_count = negative_price_count,
+            negative_30_share = negative_price_share;
+    let r60 =
+        fn_rt_price_rolling()
+        | where window_minutes == 60
+        | project
+            delivery_date,
+            delivery_hour,
+            interval_no,
+            rolling_60_complete = window_complete,
+            rolling_60_avg = rolling_avg,
+            rolling_60_min = rolling_min,
+            rolling_60_max = rolling_max,
+            rolling_60_stddev = rolling_stddev,
+            negative_60_count = negative_price_count,
+            negative_60_share = negative_price_share;
+    fn_rt_price_change()
+    | join kind=leftouter r15
+        on delivery_date, delivery_hour, interval_no
+    | join kind=leftouter r30
+        on delivery_date, delivery_hour, interval_no
+    | join kind=leftouter r60
+        on delivery_date, delivery_hour, interval_no
+    | project
+        delivery_date,
+        delivery_hour,
+        interval_no,
+        price,
+        previous_price,
+        slot_gap,
+        interval_price_change,
+        is_negative_price,
+        rolling_15_complete,
+        rolling_15_avg,
+        rolling_15_min,
+        rolling_15_max,
+        rolling_15_stddev,
+        negative_15_count,
+        negative_15_share,
+        rolling_30_complete,
+        rolling_30_avg,
+        rolling_30_min,
+        rolling_30_max,
+        rolling_30_stddev,
+        negative_30_count,
+        negative_30_share,
+        rolling_60_complete,
+        rolling_60_avg,
+        rolling_60_min,
+        rolling_60_max,
+        rolling_60_stddev,
+        negative_60_count,
+        negative_60_share,
+        event_id,
+        source_hash,
+        event_created_at_utc
+}
+.create-or-alter function with (folder = "GridPulse/RealTime", docstring = "GridPulse Real-Time data-quality summary over physical and logical event state.", skipvalidation = "true") fn_rt_dq_summary() {
+    union
+    (
+        rt_price_event_history
+        | summarize physical_count = count() by event_id
+        | extend duplicate_rows = physical_count - 1
+        | summarize metric_value = sum(duplicate_rows)
+        | extend
+            rule_id = "RT-DQ-001",
+            rule_name = "Technical duplicate deliveries",
+            severity = "WARN",
+            status = iff(metric_value == 0, "PASS", "WARN")
+        | project rule_id, rule_name, severity, status, metric_value
+    ),
+    (
+        rt_price_event_history
+        | where
+            isempty(event_id)
+            or isempty(event_type)
+            or isempty(delivery_date)
+            or isnull(delivery_hour)
+            or isnull(['interval'])
+            or isempty(source_hash)
+            or isnull(event_created_at_utc)
+        | summarize metric_value = count()
+        | extend
+            rule_id = "RT-DQ-002",
+            rule_name = "Physical deliveries missing core fields",
+            severity = "WARN",
+            status = iff(metric_value == 0, "PASS", "WARN")
+        | project rule_id, rule_name, severity, status, metric_value
+    ),
+    (
+        fn_rt_price_event_dedup()
+        | where
+            isempty(event_id)
+            or isempty(event_type)
+            or isempty(delivery_date)
+            or isnull(delivery_hour)
+            or isnull(['interval'])
+            or isempty(source_hash)
+            or isnull(event_created_at_utc)
+        | summarize metric_value = count()
+        | extend
+            rule_id = "RT-DQ-003",
+            rule_name = "Logical events missing core fields",
+            severity = "FAIL",
+            status = iff(metric_value == 0, "PASS", "FAIL")
+        | project rule_id, rule_name, severity, status, metric_value
+    ),
+    (
+        fn_rt_price_event_dedup()
+        | where not(
+            (event_type == "RT_PRICE_OBSERVATION"
+                and publication_state == "ELIGIBLE")
+            or
+            (event_type == "RT_PRICE_INVALIDATION"
+                and publication_state == "INVALIDATED")
+        )
+        | summarize metric_value = count()
+        | extend
+            rule_id = "RT-DQ-004",
+            rule_name = "Invalid event type and publication-state combination",
+            severity = "FAIL",
+            status = iff(metric_value == 0, "PASS", "FAIL")
+        | project rule_id, rule_name, severity, status, metric_value
+    ),
+    (
+        fn_rt_price_event_dedup()
+        | where
+            event_type == "RT_PRICE_OBSERVATION"
+            and (
+                isnull(zonal_price_capped_cad_per_mwh)
+                or isnull(loss_price_capped_cad_per_mwh)
+                or isnull(congestion_price_capped_cad_per_mwh)
+            )
+        | summarize metric_value = count()
+        | extend
+            rule_id = "RT-DQ-005",
+            rule_name = "Published observations missing price components",
+            severity = "FAIL",
+            status = iff(metric_value == 0, "PASS", "FAIL")
+        | project rule_id, rule_name, severity, status, metric_value
+    ),
+    (
+        fn_rt_price_event_dedup()
+        | where
+            event_type == "RT_PRICE_INVALIDATION"
+            and isempty(previous_event_id)
+        | summarize metric_value = count()
+        | extend
+            rule_id = "RT-DQ-006",
+            rule_name = "Invalidations missing previous event lineage",
+            severity = "FAIL",
+            status = iff(metric_value == 0, "PASS", "FAIL")
+        | project rule_id, rule_name, severity, status, metric_value
+    )
+    | extend evaluated_at_utc = now()
+    | order by rule_id asc
+}

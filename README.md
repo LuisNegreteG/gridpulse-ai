@@ -2,602 +2,296 @@
 
 **Ontario Real-Time Energy Intelligence & DataOps Platform**
 
-GridPulse AI is a production-oriented data engineering portfolio project built around public electricity-market data from Ontario's **Independent Electricity System Operator (IESO)**.
+GridPulse AI is a production-oriented Microsoft Fabric portfolio project built on public electricity-market data from Ontario's Independent Electricity System Operator (IESO).
 
-The project is designed to demonstrate how an enterprise data platform can move from **business requirements → governed ingestion → trusted analytical data → real-time intelligence → grounded AI-assisted investigation**.
+The project demonstrates an end-to-end data platform that moves from **source discovery and governed ingestion** to **trusted analytical serving, near-real-time intelligence, data-quality evidence, and grounded AI-assisted investigation**.
 
-Rather than focusing on a single dashboard or notebook, GridPulse AI emphasizes the engineering concerns required to operate a reliable data platform:
+> **Project status: COMPLETE — portfolio MVP finalized through Phase 5.**
 
-* explicit data grain;
-* immutable raw-data preservation;
-* source revision detection;
-* incremental and idempotent ingestion;
-* reusable data-quality controls;
-* observability and lineage;
-* dimensional modeling;
-* batch and near-real-time processing;
-* testing and failure handling;
-* architecture decision records;
-* CI/CD considerations;
-* AI grounded in governed data.
+---
+
+## What GridPulse Demonstrates
+
+GridPulse was designed to show more than a dashboard or a collection of notebooks. It focuses on the engineering controls needed to make analytical and AI-assisted outputs trustworthy:
+
+- explicit source and analytical grain;
+- immutable Bronze evidence;
+- source revision detection;
+- incremental and idempotent ingestion;
+- reusable PySpark transformation patterns;
+- Silver and Gold Delta modeling;
+- persistent data-quality evidence;
+- operational run tracking and lineage;
+- Fabric Data Factory orchestration;
+- revision-aware near-real-time processing;
+- Eventstream and Eventhouse integration;
+- KQL current-state and rolling metrics;
+- deterministic SQL/KQL investigation contracts;
+- evidence-aware AI investigation guardrails;
+- failure-path and regression testing;
+- Git-based development and pull-request workflow.
 
 ---
 
 ## Business Scenario
 
-GridPulse Energy Analytics is a fictional analytics company providing intelligence about Ontario's electricity market.
+GridPulse Energy Analytics is a fictional analytics platform for Ontario electricity-market operations.
 
-The primary user is an **Energy Operations Manager**, supported by analysts and operational leadership.
+The primary analytical question is:
 
-The platform is designed to answer:
+> **What happened in Ontario's electricity market, when did it happen, and what evidence supports the explanation?**
 
-> **What happened in Ontario's electricity market, when did it happen, and what data explains it?**
+Representative questions include:
 
-Representative analytical questions include:
-
-* What was Ontario's peak electricity demand for a selected day?
-* At what hour did peak demand occur?
-* How did demand differ across Ontario zones?
-* What was the generation mix during peak demand?
-* What was the Day-Ahead Ontario Zonal Price for each hour?
-* How did Real-Time price differ from Day-Ahead price?
-* When were DA-vs-RT price deviations largest?
-* What were demand and generation doing during unusual price movements?
-* Is the underlying data sufficiently complete and fresh to trust the analysis?
+- What was Ontario's peak electricity demand for a selected day?
+- At what hour did peak demand occur?
+- How did demand differ across Ontario zones?
+- What was the generation mix at a selected hour?
+- What were the Day-Ahead price components?
+- What was the current Real-Time price state?
+- How did Real-Time price differ from Day-Ahead price where comparable?
+- Were rolling Real-Time windows complete before a metric was interpreted?
+- Is the available evidence complete enough to support a conclusion?
 
 ---
 
-## Architecture
+## High-Level Architecture
 
 ```text
                          IESO PUBLIC MARKET REPORTS
                                    |
                  +-----------------+-----------------+
                  |                                   |
-                 |                                   |
+                 v                                   v
             BATCH PATH                       NEAR-REAL-TIME PATH
                  |                                   |
-                 v                                   v
-       Fabric Data Engineering               Python RT Publisher
+        Fabric Data Engineering               Python Publisher
                  |                                   |
-                 v                                   v
-              OneLake                          Fabric Eventstream
+              OneLake                           Eventstream
                  |                                   |
-                 v                                   v
-          Bronze Raw Files                       Eventhouse
+              Bronze                             Eventhouse
                  |                                   |
-                 v                                   v
-              PySpark                                KQL
-                 |
-                 v
-        Data Quality Controls
-                 |
-                 v
-              Silver
-                 |
-                 v
-               Gold
-                 |
-                 v
-       SQL Analytics Endpoint
-                 |
-                 +-------------------+
+              Silver                                KQL
+                 |                            Event History / Current State
+               Gold                           Rolling Market Metrics / DQ
+                 |                                   |
+        SQL Analytics Endpoint                       |
+                 +-------------------+---------------+
                                      |
                                      v
-                         AI Investigation Layer
-                           /       |        \
-                          /        |         \
-                    SQL tools   KQL tools   Metadata/DQ
+                         Evidence-Aware Investigation
+                              SQL + KQL + DQ
 ```
-
----
-
-## Medallion Architecture
-
-### Bronze
-
-Raw source payloads are preserved without business transformation.
-
-```text
-Files/
-└── bronze/
-    └── ieso/
-        ├── demand/
-        ├── demand_zonal/
-        ├── generation/
-        ├── price_day_ahead/
-        └── price_realtime/
-```
-
-Bronze is designed to support:
-
-* reproducibility;
-* source lineage;
-* reprocessing;
-* revision detection;
-* forensic investigation.
-
-Payload identity is based on more than filename alone. SHA-256 hashes and source-version metadata are used to distinguish unchanged files from revised source publications.
-
-### Silver
-
-Planned normalized Delta tables:
-
-```text
-silver.demand_hourly
-silver.demand_zonal_hourly
-silver.generation_hourly
-silver.price_day_ahead_hourly
-silver.price_realtime_5min
-```
-
-Silver responsibilities include:
-
-* schema enforcement;
-* parsing and normalization;
-* type conversion;
-* grain enforcement;
-* duplicate handling;
-* source-quality preservation;
-* technical metadata;
-* quarantine where appropriate.
-
-### Gold
-
-Gold intentionally avoids combining incompatible grains into one oversized table.
-
-Planned analytical tables include:
-
-```text
-gold.fact_market_hourly
-gold.fact_generation_hourly
-gold.fact_zonal_demand_hourly
-gold.fact_realtime_price_5min
-```
-
-Supporting dimensions will only be introduced when they provide analytical value.
 
 ---
 
 ## Data Sources
 
-GridPulse uses public data published by IESO.
+GridPulse uses five public IESO source families:
 
-### 1. Hourly Demand
+1. **Hourly Demand** — Ontario and Market demand by market date and hour ending.
+2. **Hourly Zonal Demand** — demand by Ontario zone.
+3. **Generator Output by Fuel Type** — hourly generation categories and source quality information.
+4. **Day-Ahead Ontario Zonal Price** — hourly zonal, loss, and congestion components.
+5. **Real-Time Ontario Zonal Price** — five-minute price intervals used by the near-real-time path.
 
-Contains hourly:
-
-* Market Demand
-* Ontario Demand
-
-Observed source grain:
-
-```text
-Date + Hour
-```
-
-### 2. Hourly Zonal Demand
-
-Contains Ontario demand together with regional demand across zones such as:
-
-* Northwest
-* Northeast
-* Ottawa
-* East
-* Toronto
-* Essa
-* Bruce
-* Southwest
-* Niagara
-* West
-
-The physical source is wide:
-
-```text
-Date + Hour + multiple zone columns
-```
-
-Silver will normalize it to:
-
-```text
-market_date + hour + zone
-```
-
-### 3. Generator Output by Fuel Type Hourly
-
-XML source containing IESO-reported hourly generation categories.
-
-Observed flattened grain:
-
-```text
-Date + Hour + Fuel
-```
-
-Observed categories during source discovery included:
-
-```text
-BIOFUEL
-CONTROL ACTIONS
-GAS
-HYDRO
-NUCLEAR
-OTHER
-SOLAR
-WIND
-```
-
-Source-provided quality information is retained rather than silently discarded.
-
-### 4. Day-Ahead Ontario Zonal Price
-
-Daily XML reports containing hourly Day-Ahead Ontario Zonal Price information.
-
-Observed grain:
-
-```text
-DeliveryDate + PricingHour
-```
-
-Relevant source fields include:
-
-```text
-ZonalPrice
-LossPriceCapped
-CongestionPriceCapped
-Flag
-```
-
-### 5. Real-Time Ontario Zonal Price
-
-Five-minute real-time price source used by the near-real-time architecture.
-
-Observed grain:
-
-```text
-DeliveryDate + DeliveryHour + Interval
-```
-
-The source exposes twelve five-minute interval slots for a dispatch hour.
-
-The mutable current-report alias requires snapshot and revision awareness rather than filename-only deduplication.
+Source discovery established grain, schema, date coverage, null behavior, duplicate behavior, and revision characteristics before production transformations were implemented.
 
 ---
 
-## Source Discovery
+## Batch Data Platform
 
-The first engineering phase profiles each source before production contracts are defined.
+### Bronze
 
-The discovery framework captures:
+Raw source payloads are retained as immutable evidence with source metadata and hashes. This supports reproducibility, reprocessing, forensic investigation, and revision detection.
 
-* source URL;
-* source format;
-* filename;
-* file size;
-* SHA-256 hash;
-* source metadata;
-* schema;
-* row count;
-* date coverage;
-* null counts;
-* duplicate analysis;
-* candidate grain;
-* sample records;
-* source-specific quirks.
+### Silver
 
-### Current discovery status
+Silver applies schema enforcement, parsing, normalization, type conversion, grain validation, duplicate handling, source-quality preservation, and technical lineage.
+
+### Gold
+
+Gold exposes source-aligned analytical facts rather than forcing incompatible grains into one table. Key serving objects include:
 
 ```text
-ieso_hourly_demand                    PASS
-ieso_hourly_zonal_demand              PASS
-ieso_generation_by_fuel_hourly        PASS
-ieso_day_ahead_ontario_zonal_price    PASS
-ieso_realtime_ontario_zonal_price     PASS
+gold.fact_market_demand_hourly
+gold.fact_zonal_demand_hourly
+gold.fact_generation_hourly
+gold.fact_day_ahead_price_hourly
+gold.fact_realtime_price_5min
 ```
 
-All five MVP sources have completed initial structural discovery.
-
----
-
-## Selected Discovery Findings
-
-Source discovery has already identified behaviours that directly influence platform design.
-
-### Source revisions are real
-
-IESO publishes versioned/revised reports.
-
-GridPulse therefore distinguishes:
-
-```text
-same filename + same hash
-→ unchanged payload
-
-same filename + different hash
-→ revised source payload
-```
-
-### Latest date does not imply completeness
-
-A source may expose the latest business date while only a subset of expected hourly or interval data has been published.
-
-Freshness therefore requires more than:
-
-```text
-MAX(date)
-```
-
-### Cross-source reconciliation matters
-
-Ontario Demand was reconciled between the Hourly Demand and Hourly Zonal Demand reports.
-
-The inspected overlapping dataset contained one source-level discrepancy.
-
-GridPulse preserves both values and records the reconciliation issue instead of silently overwriting either source.
-
-### Source nulls are not automatically bad data
-
-The Generation XML schema permits `Output` to be absent.
-
-Similarly, Day-Ahead and Real-Time price schemas allow empty monetary values.
-
-Structural validity, business completeness and semantic quality are therefore treated as separate concepts.
-
-### Real-time slots and published events are different concepts
-
-The Real-Time report can expose all twelve interval slots while future intervals remain empty.
-
-GridPulse preserves the complete source snapshot but will only publish sufficiently populated market events into the streaming path.
-
----
-
-## Data Quality Strategy
-
-GridPulse is designed around reusable data-quality controls.
-
-Planned categories include:
-
-```text
-Schema
-Completeness
-Uniqueness
-Grain
-Validity
-Freshness
-Referential consistency
-Cross-source reconciliation
-Volume anomalies
-```
-
-Potential outcomes include:
-
-```text
-PASS
-WARN
-FAIL
-```
-
-Invalid data must not disappear silently.
-
-Conceptually:
-
-```text
-valid record
-→ trusted Silver
-
-structurally invalid record
-→ quarantine
-
-valid but suspicious record
-→ preserve + DQ finding
-```
-
-Business rules are not created without evidence from the source or authoritative documentation.
-
----
-
-## Observability
-
-The operational layer is designed around tables such as:
+Operational evidence is persisted through objects such as:
 
 ```text
 ops.etl_run
 ops.source_file_registry
+ops.pipeline_watermark
 ops.dq_result
 ```
 
-### Source file registry
+The batch implementation includes incremental processing, idempotent MERGE behavior, Delta Change Data Feed usage, version-based watermarks, revision propagation, and failure-path validation.
 
-Tracks information such as:
+---
 
-```text
-source_name
-file_name
-source_url
-file_size
-file_hash
-source_version
-first_seen_ts
-last_seen_ts
-processing_status
-run_id
-```
+## Data Quality & Observability
 
-### ETL execution
+GridPulse separates three concepts that are often incorrectly conflated:
 
-Tracks:
+1. **Execution health** — did the process run successfully?
+2. **Data quality** — did the applicable rules pass, warn, or fail?
+3. **Evidence sufficiency** — is enough usable data available to answer the requested question?
 
-```text
-run_id
-pipeline_name
-source_name
-start_ts
-end_ts
-status
-records_read
-records_written
-records_rejected
-error_message
-```
+Batch DQ results are persisted and the latest logical result is determined per source, dataset, and rule. Real-Time DQ uses governed KQL rules over Eventhouse state.
 
-This allows data correctness, freshness and execution health to be evaluated independently.
+Important platform behaviors:
+
+- `NULL` is never silently converted to zero.
+- Negative electricity-price components are preserved as valid observations unless a specific rule says otherwise.
+- Warnings do not automatically block all analysis.
+- A passing DQ rule does not imply the requested evidence exists.
+- Scope-specific quality findings are not treated as globally contagious.
 
 ---
 
 ## Real-Time Intelligence
 
-The planned real-time path is:
+The near-real-time path implements revision-aware publication and serving for IESO Real-Time price observations:
 
 ```text
-IESO Real-Time Ontario Zonal Price
-                |
-                v
-        Python Publisher
-                |
-                v
-        Fabric Eventstream
-                |
-                v
-           Eventhouse
-                |
-                v
-               KQL
+IESO RT Source
+    |
+Single-Poll Publisher
+    |
+Immutable Bronze Evidence
+    |
+Revision-Aware Event Logic
+    |
+Durable Delta Outbox
+    |
+Retry-Safe Dispatcher
+    |
+Fabric Eventstream
+    |
+Eventhouse
+    |
+KQL Event History
+    |
++----------------------+----------------------+
+|                      |                      |
+Current State       Price Change         Rolling Metrics
+                                          15 / 30 / 60 min
 ```
 
-The publisher will distinguish:
+Key Real-Time behaviors include:
 
-### Business identity
-
-```text
-delivery_date
-delivery_hour
-interval
-```
-
-### Source revision identity
-
-```text
-business key
-+ source_created_at
-+ source_hash
-```
-
-This allows revised market observations to be retained rather than silently discarded.
+- deterministic observation and event identity;
+- durable outbox and completion checkpoint;
+- revision and invalidation semantics;
+- logical event deduplication;
+- current eligible state by native business key;
+- gap-aware interval-over-interval price change;
+- completeness-aware rolling 15/30/60-minute metrics;
+- Real-Time data-quality and observability rules.
 
 ---
 
-## AI Investigation Layer
+## Evidence-Aware Investigation Layer
 
-The final platform will include an AI-assisted investigation layer grounded in actual platform data.
+Phase 5 adds governed investigation contracts over trusted SQL and KQL serving layers.
 
-The AI layer will use controlled tools such as:
+### SQL serving contracts
 
-```text
-get_demand
-get_zonal_demand
-get_generation_mix
-get_day_ahead_price
-get_realtime_price
-compare_da_vs_rt_price
-get_peak_demand
-get_market_summary
-investigate_market_event
-get_data_quality_status
-```
-
-Critical KPIs are calculated by tools rather than freely generated by the language model.
-
-If sufficient evidence does not exist, the expected behaviour is:
-
-> **I don't have sufficient data to answer this question.**
-
-The agent will later be evaluated for:
-
-* tool-selection accuracy;
-* parameter correctness;
-* numerical grounding;
-* unsupported claims;
-* failure behaviour;
-* latency.
-
-No agent-quality metric will be reported before it has actually been measured.
-
----
-
-## Testing Strategy
-
-GridPulse will use three testing layers.
-
-### Unit Tests
-
-Examples:
-
-* XML parsers;
-* reusable transformation functions;
-* schema validators;
-* hashing and revision helpers.
-
-### Data Tests
-
-Examples:
-
-* grain uniqueness;
-* completeness;
-* schema compliance;
-* date continuity;
-* referential integrity;
-* source reconciliation.
-
-### Agent Tests
-
-Examples:
-
-* expected tool selection;
-* parameter correctness;
-* grounded numerical response;
-* unsupported-question handling.
-
-Failure scenarios will include:
+Source-controlled deployment definitions are available in:
 
 ```text
-source unavailable
-empty file
-schema change
-duplicate source
-revised source
-bad timestamp
-incomplete data
-unsupported AI question
+fabric/sql/phase5_investigation_serving.sql
 ```
 
+The contracts cover:
+
+- latest persisted Batch DQ state;
+- demand lookup;
+- peak demand;
+- zonal demand;
+- generation mix;
+- Day-Ahead prices;
+- Day-Ahead vs historical Real-Time comparison;
+- Batch DQ status.
+
+### Real-Time serving contracts
+
+The investigation notebook consumes governed Eventhouse functions for:
+
+- current Real-Time price state;
+- revision-aware logical history;
+- gap-safe price change;
+- rolling market metrics;
+- Real-Time DQ state.
+
+### Evidence states
+
+Responses are classified deterministically as:
+
+```text
+SUFFICIENT
+PARTIAL
+INSUFFICIENT
+BLOCKED_BY_DQ
+```
+
+Precedence is intentionally conservative:
+
+1. no primary evidence → `INSUFFICIENT`;
+2. required metrics unusable → `INSUFFICIENT`;
+3. applicable blocking DQ failure → `BLOCKED_BY_DQ`;
+4. incomplete requested scope → `PARTIAL`;
+5. otherwise → `SUFFICIENT`.
+
+The reasoning layer is not given unrestricted SQL or KQL execution. Critical metrics are calculated deterministically by governed serving logic rather than generated by an LLM.
+
+### Composite investigation
+
+`nb_09_ai_investigation` demonstrates multi-engine investigation by combining:
+
+- Real-Time price evidence;
+- deterministic Real-Time metrics;
+- applicable DQ evidence;
+- available hourly demand context;
+- explicit limitations and evidence-state reasoning.
+
+Concurrent market conditions are not presented as causal explanations.
+
 ---
 
-## Architecture Principles
+## Validation
 
-GridPulse follows several explicit engineering principles:
+The final Phase 5 regression suite completed successfully:
 
-1. Business-driven architecture
-2. Explicit data grain
-3. Immutable raw-data preservation
-4. Idempotent ingestion
-5. Incremental processing
-6. Source revision awareness
-7. Reusable data-quality controls
-8. Observability
-9. Data lineage
-10. Separation of analytical grains
-11. Batch + near-real-time processing
-12. Testing and failure handling
-13. Security by design
-14. CI/CD awareness
-15. Architecture Decision Records
-16. Grounded AI analytics
-17. Measurable rather than claimed scalability
+```text
+FINAL PHASE 5 EVALUATION: 10/10 PASSED
+```
+
+Validated behaviors include:
+
+- complete Batch evidence;
+- partial Batch coverage;
+- missing Batch evidence;
+- existing Real-Time evidence;
+- missing Real-Time evidence;
+- composite graceful degradation;
+- blocking-DQ policy;
+- invalid Hour Ending rejection;
+- invalid Real-Time interval rejection;
+- invalid date-format rejection.
+
+The Real-Time layer was also validated for current-state uniqueness, rolling-window completeness behavior, gap-safe price-change behavior, and missing-key handling.
 
 ---
 
-## Technology Stack
+## Microsoft Fabric Components
 
-The implementation is centered on:
+The implemented platform uses:
 
 ```text
 Microsoft Fabric
@@ -606,184 +300,121 @@ Fabric Lakehouse
 Delta Lake
 PySpark / Spark
 Python
-SQL
+SQL Analytics Endpoint
 Fabric Data Factory
 Fabric Eventstream
 Fabric Eventhouse
 KQL
-Power BI
 Git / GitHub
 ```
 
-Technologies are introduced only when they solve a specific architectural requirement.
+A Fabric Data Agent was evaluated during Phase 5 but was not deployed because the available Fabric Trial capacity did not support creation of the required Data Agent workload. The deterministic investigation contracts remain runtime-independent and can be exposed through a supported agent runtime later without redesigning the data layer.
 
 ---
 
-## Repository Structure
+## Repository Layout
 
 ```text
 gridpulse-ai/
-│
 ├── README.md
-│
 ├── architecture/
-│
 ├── docs/
-│   ├── business_requirements.md
-│   ├── source_catalog.md
-│   ├── data_contracts.md
-│   ├── architecture_decisions.md
-│   ├── data_quality.md
-│   ├── security.md
-│   └── runbook.md
-│
-├── notebooks/
-├── ingestion/
-├── realtime/
-├── sql/
-├── agents/
-├── evaluation/
-├── tests/
-└── fabric/
+├── fabric/
+│   ├── sql/
+│   │   └── phase5_investigation_serving.sql
+│   └── workspace/
+│       ├── nb_01_source_discovery.Notebook/
+│       ├── ...
+│       ├── nb_09_ai_investigation.Notebook/
+│       ├── Tables_Creation.KQLQueryset/
+│       ├── eh_gridpulse_realtime.Eventhouse/
+│       └── other Fabric-managed artifacts
 ```
 
-Fabric-managed workspace definitions will later be stored separately from manually maintained documentation and supporting code.
+Fabric-managed workspace definitions are retained separately from manually maintained documentation and SQL deployment contracts.
 
 ---
 
-## Development Roadmap
+## Development Roadmap — Complete
 
-### Phase 1 — Architecture & Source Discovery
+### Phase 1 — Architecture & Source Discovery ✅
 
-* [x] Fabric development workspace
-* [x] Schema-enabled Lakehouse
-* [x] Bronze landing zones
-* [x] Source discovery notebook
-* [x] Five IESO source investigations
-* [x] Source grain validation
-* [x] Source revision discovery
-* [x] Source catalog
-* [x] Initial data contracts
-* [x] Architecture Decision Records
-* [x] GitHub/Fabric integration
+- Fabric development workspace
+- schema-enabled Lakehouse
+- Bronze landing zones
+- source discovery for five IESO sources
+- source grain and revision discovery
+- data contracts and ADRs
+- GitHub/Fabric integration
 
-### Phase 2 — Bronze & Silver Engineering
+### Phase 2 — Bronze & Silver Engineering ✅
 
-* [ ] Reusable ingestion framework
-* [ ] Incremental Bronze ingestion
-* [ ] Revision-aware source registry
-* [ ] PySpark transformations
-* [ ] Silver Delta tables
-* [ ] Quarantine handling
-* [ ] Technical lineage metadata
+- reusable ingestion framework
+- incremental Bronze ingestion
+- revision-aware source registry
+- PySpark transformations
+- Silver Delta tables
+- quarantine handling
+- lineage metadata
 
-### Phase 3 — Gold, Quality & Orchestration
+### Phase 3 — Gold, Quality & Orchestration ✅
 
-* [ ] Gold analytical model
-* [ ] Reusable DQ framework
-* [ ] ETL run-control framework
-* [ ] Incremental processing
-* [ ] Idempotent MERGE patterns
-* [ ] Fabric orchestration
+- source-aligned Gold model
+- reusable DQ framework
+- ETL run-control framework
+- incremental/idempotent processing
+- Fabric orchestration
+- failure-path validation
 
-### Phase 4 — Real-Time Intelligence
+### Phase 4 — Real-Time Intelligence ✅
 
-* [ ] Real-Time source publisher
-* [ ] Eventstream
-* [ ] Eventhouse
-* [ ] KQL analytics
-* [ ] Duplicate/revision handling
-* [ ] Rolling market metrics
+- revision-aware publisher
+- immutable Bronze evidence reuse
+- durable outbox and checkpoint
+- retry-safe dispatcher
+- Eventstream and Eventhouse
+- KQL current state
+- rolling 15/30/60-minute metrics
+- Real-Time DQ and observability
+- end-to-end validation
 
-### Phase 5 — AI & Production Readiness
+### Phase 5 — Evidence-Aware AI & Production Readiness ✅
 
-* [ ] SQL/KQL investigation tools
-* [ ] Grounded market-investigation agent
-* [ ] Data-quality-aware responses
-* [ ] Agent evaluation dataset
-* [ ] Unit/data/agent tests
-* [ ] Failure testing
-* [ ] Production-readiness review
+- deterministic SQL investigation contracts
+- governed KQL investigation sources
+- Batch and Real-Time DQ integration
+- evidence-state evaluator
+- evidence-aware demand and Real-Time adapters
+- composite market-event investigation
+- validation and failure tests
+- final 10/10 regression suite
+- source-controlled deployment artifacts
+- production-readiness review
 
 ---
 
-## Current Project Status
+## Portfolio Summary
 
-**Phase 1 — Architecture & Source Discovery: COMPLETE**
+GridPulse demonstrates the design and implementation of a Microsoft Fabric data platform spanning batch and near-real-time workloads, with explicit lineage, revision handling, data-quality evidence, deterministic SQL/KQL serving contracts, and an evidence-aware investigation layer designed to prevent unsupported analytical claims.
 
-Five core IESO sources have completed technical discovery and candidate-grain validation.
-
-The project now has:
-
-- documented business requirements;
-- Architecture V1;
-- source catalog;
-- initial Data Contracts;
-- Architecture Decision Records;
-- naming conventions;
-- immutable Bronze source samples;
-- source-integrity validation;
-- GitHub version control;
-- Microsoft Fabric Git integration.
-
-The next engineering phase is:
-
-```text
-Bronze ingestion framework
-→ source registry
-→ Silver transformations
-→ data quality implementation
+The project is intentionally closed at the portfolio-MVP boundary. Future extensions may add a supported external or Fabric-native agent runtime, but the underlying deterministic data contracts and evidence model are complete.
 
 ---
 
 ## Data Governance
 
-All current sources are public IESO market reports.
+All current project sources are public IESO market reports.
 
 ```text
 Classification: PUBLIC
 PII: NONE OBSERVED
 ```
 
-Credentials, secrets, connection strings, access tokens and API keys must never be committed to this repository.
+Secrets and credentials are not intended to be committed to the repository.
 
 ---
 
-## Data Attribution
+## Author
 
-GridPulse AI uses publicly available electricity-market data published by the **Independent Electricity System Operator (IESO)**.
-
-GridPulse AI is an independent portfolio project and is **not affiliated with, endorsed by, or operated by IESO**.
-
-Official IESO data resources:
-
-* IESO Power Data / Data Directory
-* IESO Public Reports
-
-Source-specific details and observed behaviours are documented in:
-
-```text
-docs/source_catalog.md
-```
-
----
-
-## Engineering Goal
-
-The objective of GridPulse AI is not simply to demonstrate the use of Microsoft Fabric.
-
-The project is intended to demonstrate the ability to reason through:
-
-```text
-requirements
-→ architecture
-→ ingestion
-→ source governance
-→ trusted data
-→ observability
-→ analytics
-→ real-time intelligence
-→ grounded AI
-```
-
-with engineering decisions that can be explained, tested and defended.
+**Luis Carlo Negrete Girano**  
+Data Engineering · Analytics Engineering · Microsoft Fabric · PySpark · SQL · KQL

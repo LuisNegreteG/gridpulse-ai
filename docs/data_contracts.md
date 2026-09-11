@@ -2,8 +2,8 @@
 
 **Project:** GridPulse AI — Ontario Real-Time Energy Intelligence & DataOps Platform  
 **Contract version:** 0.1  
-**Status:** Draft — validated through source discovery  
-**Last reviewed:** 2026-08-25  
+**Status:** Implemented — validated through Phase 4
+**Last reviewed:** 2026-09-04
 
 ---
 
@@ -217,7 +217,7 @@ Silver datasets include common lineage metadata where applicable.
 | `_source_url` | string | Yes | Original source URL |
 | `_source_hash` | string | No | SHA-256 hash of the raw source payload |
 | `_source_version` | string | Yes | Explicit source revision/version when available |
-| `_source_created_at` | timestamp | Yes | Timestamp provided by the source report |
+| `_source_created_at` | string | Yes | Raw source report CreatedAt preserved without timezone inference |
 | `_ingestion_timestamp` | timestamp | No | UTC timestamp when GridPulse ingested the payload |
 | `_run_id` | string | No | GridPulse processing-run identifier |
 
@@ -1478,7 +1478,7 @@ delivery_date
 | `loss_price_capped_cad_per_mwh` | decimal | Yes | Source LossPriceCap |
 | `congestion_price_capped_cad_per_mwh` | decimal | Yes | Source CongPriceCap |
 | `source_flag` | string | Yes | Source Flag |
-| `_source_created_at` | timestamp | Yes | Source report CreatedAt |
+| `_source_created_at` | string | Yes | Raw source report CreatedAt preserved without timezone inference |
 | `_source_doc_revision` | string/integer | Yes | Source DocRevision |
 | common metadata | — | — | Remaining GridPulse lineage fields |
 
@@ -1674,30 +1674,95 @@ No hard arithmetic DQ formula will be imposed until source semantics are confirm
 
 ### RT-011 — Mutable Alias Snapshot Identity
 
-Because:
+Because `PUB_RealtimeOntarioZonalPrice.xml` is a mutable source alias,
+Bronze identity cannot depend on the source filename or retrieval timestamp.
+
+GridPulse identifies each immutable Bronze revision using the SHA-256 hash
+of the exact raw payload bytes.
+
+Conceptually:
 
 ```text
-PUB_RealtimeOntarioZonalPrice.xml
+same source alias + same payload SHA-256
+→ same immutable Bronze evidence
+
+same source alias + different payload SHA-256
+→ new immutable Bronze revision
 ```
 
-is mutable, Bronze identity cannot depend on filename alone.
+## 10.9 Phase 4 Real-Time Event Contract v1
 
-GridPulse Bronze snapshot identity includes:
+### Event Grain
 
-```text
-retrieval timestamp
-+
-payload SHA-256
-```
+Each published Real-Time event represents one SRC-005 five-minute interval:
 
-Example:
+`delivery_date + delivery_hour + interval`
 
-```text
-PUB_RealtimeOntarioZonalPrice
-__retrieved_YYYYMMDDTHHMMSSZ
-__sha256_<hash>.xml
-```
+This is the event business identity.
 
+### Event Types
+
+GridPulse defines two event types:
+
+* `RT_PRICE_OBSERVATION`
+* `RT_PRICE_INVALIDATION`
+
+A fully populated interval is eligible for `RT_PRICE_OBSERVATION`.
+
+A fully empty interval that has never previously produced an eligible event is preserved in the source evidence but is not published as a market-price event.
+
+A partially populated interval is preserved, produces a warning condition, and is not published as a market-price observation under contract version 1.
+
+If a previously published eligible interval later becomes fully empty or partially populated in a legitimate source revision, GridPulse emits `RT_PRICE_INVALIDATION` so that real-time current-state serving does not retain a stale price observation.
+
+These publication rules are GridPulse operational decisions and are not asserted as IESO contractual rules.
+
+### Event Identity and Revision Detection
+
+GridPulse distinguishes three identities:
+
+`business identity`
+= `delivery_date + delivery_hour + interval`
+
+`source revision identity`
+= business identity + raw source `CreatedAt` + exact payload SHA-256
+
+`observation identity`
+= deterministic hash of the interval's business key, price components, and source flag
+
+The exact XML payload SHA-256 is retained in every event as source lineage.
+
+The observation hash does not include payload-level or publisher-level metadata. This prevents unchanged intervals from being republished solely because another part of the mutable XML document changed.
+
+The event ID is deterministic for a given published source revision so that retries reproduce the same logical event identity.
+
+### Source CreatedAt
+
+The source `CreatedAt` value is preserved as a raw string.
+
+GridPulse does not infer its timezone and does not convert it into a canonical market timestamp until authoritative temporal semantics are established.
+
+### Eventhouse Semantics
+
+Eventhouse retains published Real-Time event history, including legitimate revisions and invalidations.
+
+Current eligible state is derived through KQL rather than maintained initially as a separate physical current-state table.
+
+Eventhouse complements, but does not replace, immutable Bronze evidence or trusted Silver current state.
+
+Every published event must retain sufficient lineage to resolve back to the exact Bronze source payload that produced it.
+
+### Technical Event Lineage
+
+Each published Real-Time event retains:
+
+- `source_hash`: SHA-256 of the exact Bronze XML payload;
+- `bronze_first_seen_at_utc`: UTC timestamp when that exact payload hash was first registered in Bronze;
+- `publisher_run_id`: identifier of the publisher execution;
+- `poll_id`: identifier of the source poll;
+- `event_created_at_utc`: UTC timestamp when the immutable event payload was constructed.
+
+`bronze_first_seen_at_utc` is not asserted to be the exact HTTP retrieval instant. GridPulse preserves the semantics of the existing Bronze registry rather than relabeling it as source retrieval time.
 ---
 
 # 11. Cross-Source Contracts
@@ -2235,3 +2300,86 @@ failure handling
 The goal is not to force real-world source data into artificial assumptions.
 
 The goal is to provide downstream consumers with explicit, observable, testable guarantees while preserving the original source evidence whenever those guarantee cannot be satisfied.
+
+
+## Phase 2 Implementation Note
+
+The five planned Silver datasets are now implemented as Delta tables with their previously defined native grains.
+
+Technical lineage implemented across Silver includes:
+
+- `_source_name`
+- `_source_file`
+- `_source_url`
+- `_source_hash`
+- `_source_version`
+- `_source_created_at`
+- `_ingestion_timestamp`
+- `_run_id`
+
+Bronze payload identity is based on the SHA-256 hash of the exact raw payload bytes.
+
+Silver uses idempotent Delta MERGE operations by dataset business key. Source rows absent from a subsequent revision are not automatically deleted.
+
+Data quality outcomes are persisted in `ops.dq_result`.
+
+The known SRC-001 / SRC-002 Ontario Demand discrepancy remains preserved as a WARN observation:
+
+- Date: 2026-03-20
+- Hour Ending: 1
+- SRC-001: 15,232 MW
+- SRC-002: 13,962 MW
+- Difference: 1,270 MW
+
+Root cause remains unconfirmed
+
+## Gold Serving Contracts
+
+Gold represents the current analytical serving state derived from trusted Silver data.
+
+### gold.fact_market_demand_hourly
+Grain: `market_date + hour_ending`
+
+Source:
+`silver.demand_hourly`
+
+### gold.fact_zonal_demand_hourly
+Grain: `market_date + hour_ending + zone`
+
+Source:
+`silver.demand_zonal_hourly`
+
+### gold.fact_generation_hourly
+Grain: `market_date + hour_ending + fuel_type`
+
+Source:
+`silver.generation_hourly`
+
+`output_mwh` remains nullable when permitted by the upstream source contract.
+
+### gold.fact_day_ahead_price_hourly
+Grain: `market_date + hour_ending`
+
+Source:
+`silver.price_day_ahead_hourly`
+
+Price fields remain nullable and may contain valid negative values.
+
+### gold.fact_realtime_price_5min
+Grain:
+`delivery_date + delivery_hour + interval`
+
+Source:
+`silver.price_realtime_5min`
+
+Five-minute intervals are not implicitly aggregated to hourly grain.
+
+### Common Gold behavior
+
+- Natural business keys are preserved.
+- Gold uses idempotent MERGE semantics.
+- Matching keys are updated when trusted Silver state changes.
+- New keys are inserted.
+- Rows absent from newer Silver state are not automatically deleted.
+- Upstream Silver/Bronze lineage is preserved.
+- Cross-source datasets use trusted coverage intersections.

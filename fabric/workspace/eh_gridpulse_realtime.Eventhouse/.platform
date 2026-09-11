@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Eventhouse",
+    "displayName": "eh_gridpulse_realtime",
+    "description": "eh_gridpulse_realtime"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "6d451be9-dac8-bde6-4bb2-62e1889a6f51"
+  }
+}

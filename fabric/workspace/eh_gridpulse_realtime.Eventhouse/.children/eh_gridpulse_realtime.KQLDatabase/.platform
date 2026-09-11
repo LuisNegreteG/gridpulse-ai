@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "KQLDatabase",
+    "displayName": "eh_gridpulse_realtime"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "ea9fcc46-6f10-8101-441e-2b9c05fdd54a"
+  }
+}

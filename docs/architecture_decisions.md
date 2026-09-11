@@ -1,7 +1,7 @@
 # GridPulse AI — Architecture Decision Records
 
 **Project:** GridPulse AI — Ontario Real-Time Energy Intelligence & DataOps Platform  
-**Last reviewed:** 2026-08-25
+**Last reviewed:** 2026-09-04
 
 ---
 
@@ -805,20 +805,369 @@ Analytical tools must validate source availability before calculating cross-sour
 
 Where evidence is insufficient, GridPulse should return an explicit insufficient-data result rather than creating values.
 
+
+## ADR-008 — Use payload identity for immutable Bronze persistence
+
+**Decision**
+
+Bronze payloads are persisted using SHA-256 content identity rather than filename identity.
+
+Physical paths follow the pattern:
+
+`Files/bronze/ieso/<source>/<sha256>/<original_filename>`
+
+`ops.source_file_registry` maintains logical source identity, payload hash, Bronze path, revision state, and lineage.
+
+**Rationale**
+
+Several IESO sources use mutable annual files or mutable aliases whose filenames remain stable while their contents change.
+
+Using payload identity enables:
+
+- revision detection
+- idempotency
+- preservation of historical raw evidence
+- deterministic lineage
+- post-write integrity verification
+
+A filename therefore identifies an upstream source object but does not uniquely identify its payload.
+
+
+## ADR-009 — Silver represents current trusted state by native business grain
+
+**Decision**
+
+Silver tables maintain one current row per native business key using Delta MERGE.
+
+Incoming matching business keys are updated, new keys are inserted and rows absent from a newer source payload are not automatically deleted.
+
+Historical source revisions remain preserved in Bronze.
+
+**Rationale**
+
+The available source contracts do not establish that absence from a later payload represents an authoritative deletion.
+
+This approach preserves raw history while keeping Silver suitable for current-state analytics and prevents unsupported delete semantics.
+
+## ADR-010 — Preserve source-aligned analytical facts in Gold
+
+**Status:** Accepted
+
+Gold facts preserve the validated analytical grain and independent lineage of each trusted Silver dataset.
+
+Initial Gold facts are:
+
+- `gold.fact_market_demand_hourly`
+- `gold.fact_zonal_demand_hourly`
+- `gold.fact_generation_hourly`
+- `gold.fact_day_ahead_price_hourly`
+- `gold.fact_realtime_price_5min`
+
+Cross-source datasets are not materialized unless their grain alignment, business semantics, and trusted coverage intersection are explicitly defined and validated.
+
+This prevents silent grain multiplication, manufactured observations, ambiguous lineage, and coupling between sources with different revision and coverage histories.
+
+Natural business keys are retained. Surrogate keys and dimensions are deferred until a concrete serving requirement justifies them.
+
+## ADR-011 — Use lightweight serving views before derived Gold materialization
+
+**Status:** Accepted
+
+The five source-aligned Gold facts remain the physical analytical serving layer.
+
+Additional cross-source or derived Gold tables are not materialized unless repeated analytical use, performance requirements, or validated business semantics justify physical persistence.
+
+Reusable analytical logic may first be exposed through read-only serving views over Gold facts.
+
+This avoids premature duplication, preserves native grain, and keeps cross-source alignment explicit.
+
+## ADR-012 — Extend ETL run tracking to downstream pipeline executions
+
+**Status:** Accepted
+
+`ops.etl_run` is extended from Bronze ingestion tracking to general GridPulse ETL pipeline execution tracking.
+
+Bronze ingestion runs continue using:
+
+- `pipeline_name = bronze_ingestion`
+- one execution per source acquisition attempt
+
+Gold transformations create independent execution IDs using UUID4 and use:
+
+- `pipeline_name = gold_transform`
+- one execution per source-aligned Gold dataset transformation
+
+Gold DQ results reference the Gold transformation run ID rather than reusing an upstream Bronze/Silver `_run_id`.
+
+Upstream source lineage remains preserved separately in Gold row-level lineage columns.
+
+This keeps execution lineage distinct from source payload lineage and prevents dataset-level Gold DQ results from being associated with an arbitrary historical ingestion run.
+
+## ADR-013 — Defer the Power BI semantic model until analytical consumption requirements are finalized
+
+**Status:** Accepted
+
+GridPulse does not create a Power BI semantic model during the initial Gold engineering phase.
+
+The current analytical serving layer consists of five source-aligned Gold Delta facts and lightweight SQL serving views.
+
+A semantic model would currently require premature decisions about cross-fact relationships, conformed dimensions, keys, and analytical measures while several cross-source business questions still have incomplete coverage or undefined semantics.
+
+When interactive BI consumption is implemented, the preferred starting architecture is a purpose-built Direct Lake on OneLake semantic model over physical Gold Delta tables.
+
+SQL serving views remain available for SQL consumers and reusable analytical logic but are not required to become semantic-model sources.
+
+Dimensions, additional keys, and relationships will be introduced only when concrete semantic-model requirements justify them.
+
+## ADR-014 — Use Delta Change Data Feed and version watermarks for Gold incremental processing
+
+**Status:** Accepted
+
+Gold incremental processing uses Delta Change Data Feed (CDF) on trusted Silver tables.
+
+Each Gold dataset tracks the last successfully processed Silver Delta version.
+
+A Gold run reads only Silver changes after the stored watermark and up to a fixed ending version captured for that execution.
+
+Changed business keys are resolved back against the current trusted Silver state before Gold MERGE.
+
+The watermark advances only after the Gold transformation and its validation complete successfully.
+
+Because Silver deletion semantics are not defined by ADR-009, unexpected CDF delete events cause the incremental Gold run to fail rather than silently deleting or retaining ambiguous Gold state.
+
+Existing Gold tables provide the validated baseline, so initial watermarks are seeded at the current Silver table versions after CDF is enabled.
+
+## ADR-015 — Use revision-aware Real-Time event identity and history semantics
+
+Status: Accepted
+
+GridPulse publishes SRC-005 Real-Time price events at the native business grain:
+
+`delivery_date + delivery_hour + interval`
+
+Business identity is separated from source revision identity and interval observation identity.
+
+The exact source payload SHA-256 remains the authoritative payload-level lineage identifier. A separate deterministic observation hash identifies whether the semantic state of an individual interval changed. This prevents unchanged intervals from being republished merely because another portion of the mutable XML payload changed.
+
+Published event IDs are deterministic for a given business key and source revision so that publisher or transport retries reproduce the same logical event identity.
+
+Fully populated intervals are eligible for market-price observation events. Fully empty or partially populated intervals are not published as market-price observations. If a previously published eligible interval later becomes ineligible through a legitimate source revision, GridPulse publishes an explicit invalidation event rather than silently retaining stale current state.
+
+Eventhouse retains event history, including legitimate revisions and invalidations. Current eligible Real-Time state is derived through KQL rather than initially maintained as a separate physical table.
+
+The raw source `CreatedAt` value is preserved without timezone inference.
+
+Eventhouse is an analytical Real-Time serving layer and does not replace immutable Bronze source evidence, Silver trusted current state, or source revision lineage.
+
+## ADR-016 — Use a durable outbox and completion checkpoint for Real-Time event publication
+
+Status: Accepted
+
+Date: 2026-09-04
+
+### Context
+
+The SRC-005 Real-Time Ontario Zonal Price report is exposed through a mutable source alias and can change between polling executions.
+
+GridPulse must preserve the following guarantees:
+
+- a successfully acquired source revision must not be lost because downstream transport is unavailable;
+- retries must not create a new logical event identity;
+- source processing progress must survive notebook or Spark session failures;
+- an Eventstream transport failure must not require reacquiring or reparsing the source;
+- concurrent or repeated dispatcher executions must not intentionally send the same durable work item simultaneously.
+
+The Lakehouse and Fabric Eventstream cannot participate in one atomic distributed transaction.
+
+Therefore, directly publishing events to Eventstream before recording durable publisher state would create a failure window in which transport and source-processing state could diverge.
+
+### Decision
+
+GridPulse uses a durable Lakehouse outbox and a source-level completion checkpoint for Real-Time publication.
+
+The operational tables are:
+
+- `ops.rt_event_outbox`
+- `ops.rt_publisher_checkpoint`
+
+For each source revision, the publisher:
+
+1. acquires the source once and persists exact Bronze evidence;
+2. determines revision-aware interval decisions;
+3. constructs deterministic Real-Time events;
+4. persists publishable events to `ops.rt_event_outbox`;
+5. validates that the expected durable events exist;
+6. advances the completed source checkpoint;
+7. dispatches durable outbox events independently to Fabric Eventstream.
+
+The source checkpoint therefore represents:
+
+> the latest source revision whose publication decisions were durably materialized
+
+It does not mean:
+
+> every derived event has already reached Eventhouse
+
+Transport completion is tracked independently by the outbox.
+
+### Outbox State Model
+
+Durable events use the following transport states:
+
+`PENDING → SENDING → SENT`
+
+`PENDING`
+
+The event is durably stored and eligible for transport.
+
+`SENDING`
+
+A dispatcher has obtained a temporary lease for the event.
+
+The lease records:
+
+- `lease_owner_run_id`
+- `lease_expires_at_utc`
+
+An expired `SENDING` lease becomes eligible for recovery by another dispatcher execution.
+
+`SENT`
+
+The transport operation returned successfully and the event records `sent_at_utc`.
+
+A transport exception returns the event to `PENDING`, releases the lease, preserves the deterministic `event_id`, increments attempt metadata, and records `last_error`.
+
+### Delivery Semantics
+
+GridPulse uses at-least-once physical transport semantics.
+
+A failure can occur after Eventstream accepts an event but before the publisher durably records `SENT`.
+
+A later retry may therefore produce more than one physical delivery of the same logical event.
+
+GridPulse does not attempt to solve this with nondeterministic retry IDs.
+
+Instead:
+
+- `event_id` is deterministic;
+- Eventhouse retains append-oriented physical history;
+- `fn_rt_price_event_dedup()` resolves duplicate physical deliveries by `event_id`;
+- downstream current-state functions operate on logical deduplicated events.
+
+Therefore:
+
+`physical deliveries >= logical events`
+
+is allowed, while logical event identity remains stable.
+
+### Checkpoint Semantics
+
+`ops.rt_publisher_checkpoint` tracks source-processing progress separately from transport progress.
+
+Important fields include:
+
+- `last_completed_source_hash`
+- `last_completed_bronze_path`
+- `last_completed_first_seen_at_utc`
+- `last_completed_at_utc`
+- `last_successful_poll_at_utc`
+- `last_publisher_run_id`
+
+`last_successful_poll_at_utc` may advance even when the source payload is unchanged.
+
+The completed source hash advances only after the revision has been successfully evaluated and all required publishable events have been durably represented in the outbox.
+
+An unchanged source revision does not create duplicate events.
+
+### Alternatives Considered
+
+#### Alternative A — Publish directly to Eventstream and then update the checkpoint
+
+Rejected.
+
+A failure after transport but before checkpoint persistence would cause the source revision to appear unprocessed and could result in uncontrolled replay.
+
+A failure before transport completion could also leave no durable record of work that still needs to be sent.
+
+#### Alternative B — Advance the checkpoint before persisting events
+
+Rejected.
+
+A notebook failure after checkpoint advancement could permanently skip events from a source revision.
+
+#### Alternative C — Treat Eventstream as the durable publisher queue
+
+Rejected.
+
+Eventstream is used as the Real-Time transport and routing layer, not as GridPulse's authoritative publisher control plane.
+
+The Lakehouse outbox preserves retry state, source lineage, event payloads, attempt metadata, and operational auditability.
+
+#### Alternative D — Durable Lakehouse outbox with independent dispatcher
+
+Selected.
+
+This separates source processing from network transport while retaining deterministic recovery behaviour.
+
+### Consequences
+
+Positive:
+
+- source revisions survive downstream transport outages;
+- transport retries do not require another source acquisition;
+- publisher recovery is deterministic;
+- source-processing progress and transport progress remain independently observable;
+- expired leases permit recovery from interrupted dispatchers;
+- event identity remains stable across retries;
+- Eventhouse can safely support at-least-once physical delivery through logical deduplication.
+
+Negative:
+
+- two operational Delta tables must be maintained;
+- physical duplicate deliveries remain possible under acknowledged at-least-once semantics;
+- dispatcher lease and retry logic add operational complexity;
+- unattended dispatch requires the Eventstream credential to be available securely at runtime.
+
+### Deployment Constraint
+
+The current Fabric environment does not expose a supported notebook user-code credential path for the Eventstream/Event Hub connection used by this project.
+
+The notebook therefore expects:
+
+`GRIDPULSE_EVENTSTREAM_CONNECTION`
+
+to be injected securely into the runtime when transport work exists.
+
+The connection string is not stored in source control.
+
+This deployment constraint does not change the durable outbox architecture and may be replaced by a supported managed-identity or secret-injection mechanism in a future deployment environment.
+
+
 ---
 
 # ADR Register
 
+
 | ADR | Decision | Status |
 |---|---|---|
-| ADR-001 | Use 2026 as initial analytical period | ACCEPTED |
+| ADR-001 | Use 2026 as the initial analytical period | ACCEPTED |
 | ADR-002 | Preserve raw source payloads in Bronze | ACCEPTED |
 | ADR-003 | Detect source revisions using hashes and versions | ACCEPTED |
 | ADR-004 | Separate analytical tables by native grain | ACCEPTED |
-| ADR-005 | Use one schema-enabled Lakehouse for MVP | ACCEPTED |
+| ADR-005 | Use one schema-enabled Lakehouse for the MVP | ACCEPTED |
 | ADR-006 | Select AI agent implementation after capability validation | DEFERRED |
 | ADR-007 | Treat historical coverage as source-specific | ACCEPTED |
+| ADR-008 | Use payload identity for immutable Bronze persistence | ACCEPTED |
+| ADR-009 | Silver represents current trusted state by native business grain | ACCEPTED |
+| ADR-010 | Preserve source-aligned analytical facts in Gold | ACCEPTED |
+| ADR-011 | Use lightweight serving views before derived Gold materialization | ACCEPTED |
+| ADR-012 | Extend ETL run tracking to downstream pipeline executions | ACCEPTED |
+| ADR-013 | Defer the Power BI semantic model until analytical consumption requirements are finalized | ACCEPTED |
+| ADR-014 | Use Delta Change Data Feed and version watermarks for Gold incremental processing | ACCEPTED |
+| ADR-015 | Use revision-aware Real-Time event identity and history semantics | ACCEPTED |
+| ADR-016 | Use a durable outbox and completion checkpoint for Real-Time event publication | ACCEPTED |
 
+---
 ---
 
 # ADR Governance
